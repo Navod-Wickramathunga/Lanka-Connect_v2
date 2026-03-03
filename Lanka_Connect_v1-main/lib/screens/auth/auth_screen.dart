@@ -19,9 +19,6 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  static const String figmaAuthLoginPath = '/auth';
-  static const String figmaAuthSignupPath = '/auth/signup';
-
   GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();

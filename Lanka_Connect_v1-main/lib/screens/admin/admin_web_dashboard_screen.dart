@@ -77,6 +77,16 @@ class AdminWebDashboardScreen extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      Icon(Icons.message_outlined, size: 18),
+                      SizedBox(width: 6),
+                      Text('Messages'),
+                    ],
+                  ),
+                ),
+                Tab(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       Icon(Icons.checklist, size: 18),
                       SizedBox(width: 6),
                       Text('Activity Log'),
@@ -93,6 +103,7 @@ class AdminWebDashboardScreen extends StatelessWidget {
                 _UsersPanel(),
                 AdminServicesScreen(),
                 _ReviewModerationPanel(),
+                _MessageModerationPanel(),
                 _ActivityLogPanel(),
               ],
             ),

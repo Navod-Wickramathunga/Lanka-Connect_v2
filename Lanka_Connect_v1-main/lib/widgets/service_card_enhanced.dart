@@ -100,7 +100,7 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
         transform: _hovering
-            ? (Matrix4.identity()..translate(0, -2))
+            ? (Matrix4.identity()..setTranslationRaw(0, -2, 0))
             : Matrix4.identity(),
         child: Card(
           elevation: _hovering ? 6 : 2,
