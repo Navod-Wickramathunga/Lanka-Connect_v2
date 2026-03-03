@@ -55,8 +55,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            val isCiBuild = System.getenv("CI") == "true"
+            // CI release builds can fail due to aggressive shrinking on plugin-heavy apps.
+            // Keep shrinking for local release builds, disable it in CI for stable APK artifacts.
+            isMinifyEnabled = !isCiBuild
+            isShrinkResources = !isCiBuild
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
