@@ -39,6 +39,9 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
+      - name: Prepare Firebase options for CI compile
+        run: cp .firebase_templates/firebase_options.dart lib/firebase_options.dart
+
       - name: Build release APK
         run: flutter build apk --release
 
