@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "262402675622",
+    "project_id": "lankaconnect-app",
+    "storage_bucket": "lankaconnect-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:262402675622:android:4155e440124b4dec67b567",
+        "android_client_info": {
+          "package_name": "com.example.lanka_connect"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "262402675622-eotdpfbljqad8krtlli8rj6ufkj4refg.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBcinz104MNv8RjdZQX32w5acmreKhJ5Qw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "262402675622-eotdpfbljqad8krtlli8rj6ufkj4refg.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "262402675622-54uj3qjcbs22580nscvvmo89d3737pqb.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.lankaConnect"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

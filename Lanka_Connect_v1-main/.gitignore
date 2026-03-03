@@ -44,15 +44,13 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Firebase secrets (DO NOT COMMIT)
-android/app/google-services.json
-ios/Runner/GoogleService-Info.plist
-lib/firebase_options.dart
-Lanka_Connect_v1-main/android/app/google-services.json
-Lanka_Connect_v1-main/ios/Runner/GoogleService-Info.plist
-Lanka_Connect_v1-main/lib/firebase_options.dart
+# Firebase client config (safe to commit – security enforced by Firestore/Storage rules)
+# android/app/google-services.json
+# ios/Runner/GoogleService-Info.plist
+# lib/firebase_options.dart
+
 # Nested duplicate folder
-Lanka_Connect_v1-main/
+# Lanka_Connect_v1-main/
 
 # Build outputs and caches
 build/
