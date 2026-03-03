@@ -42,6 +42,9 @@ jobs:
       - name: Prepare Firebase options for CI compile
         run: cp .firebase_templates/firebase_options.dart lib/firebase_options.dart
 
+      - name: Prepare google-services.json for CI compile
+        run: cp .firebase_templates/google-services.json android/app/google-services.json
+
       - name: Build release APK
         run: flutter build apk --release
 
