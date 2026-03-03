@@ -39,11 +39,27 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Prepare Firebase options for CI compile
-        run: cp .firebase_templates/firebase_options.dart lib/firebase_options.dart
+      - name: Inject firebase_options.dart from secrets
+        env:
+          FIREBASE_OPTIONS_DART: ${{ secrets.FIREBASE_OPTIONS_DART }}
+        run: |
+          if [ -n "$FIREBASE_OPTIONS_DART" ]; then
+            echo "$FIREBASE_OPTIONS_DART" > lib/firebase_options.dart
+          else
+            echo "::warning::FIREBASE_OPTIONS_DART secret not set – using template (auth will NOT work)"
+            cp .firebase_templates/firebase_options.dart lib/firebase_options.dart
+          fi
 
-      - name: Prepare google-services.json for CI compile
-        run: cp .firebase_templates/google-services.json android/app/google-services.json
+      - name: Inject google-services.json from secrets
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+          else
+            echo "::warning::GOOGLE_SERVICES_JSON secret not set – using template"
+            cp .firebase_templates/google-services.json android/app/google-services.json
+          fi
 
       - name: Build release APK
         run: flutter build apk --release
