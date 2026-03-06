@@ -259,7 +259,7 @@ class _StatMini extends StatelessWidget {
                   label,
                   style: TextStyle(
                     fontSize: 11,
-                    color: DesignTokens.textSubtle,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -326,7 +326,7 @@ class _MonthlyServiceSummary extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: DesignTokens.textSubtle,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -391,7 +391,7 @@ class _MonthStat extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             label,
-            style: TextStyle(fontSize: 10, color: DesignTokens.textSubtle),
+            style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
             textAlign: TextAlign.center,
           ),
         ],
@@ -591,7 +591,7 @@ class _RatingsCard extends StatelessWidget {
                       '${docs.length} reviews',
                       style: TextStyle(
                         fontSize: 12,
-                        color: DesignTokens.textSubtle,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -642,7 +642,7 @@ class _RatingsCard extends StatelessWidget {
                                 '$count',
                                 style: TextStyle(
                                   fontSize: 11,
-                                  color: DesignTokens.textSubtle,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                                 ),
                               ),
                             ),
@@ -720,7 +720,7 @@ class _LevelCard extends StatelessWidget {
                             '$completedCount completed jobs',
                             style: TextStyle(
                               fontSize: 12,
-                              color: DesignTokens.textSubtle,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ],
@@ -745,7 +745,7 @@ class _LevelCard extends StatelessWidget {
                         '$completedCount / ${level.nextThreshold}',
                         style: TextStyle(
                           fontSize: 12,
-                          color: DesignTokens.textSubtle,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ],
@@ -946,7 +946,7 @@ class _RecentBookings extends StatelessWidget {
                       dateStr,
                       style: TextStyle(
                         fontSize: 11,
-                        color: DesignTokens.textSubtle,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                     trailing: Container(

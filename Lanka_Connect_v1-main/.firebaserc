@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "lankaconnect-app"
+    "default": "lankaconnect-app",
+    "staging": "lankaconnect-app",
+    "production": "new-lanka-connect-app"
   }
 }

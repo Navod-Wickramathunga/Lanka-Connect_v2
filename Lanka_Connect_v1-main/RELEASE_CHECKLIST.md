@@ -56,9 +56,20 @@ flutter build appbundle --release
 flutter build ipa --release
 
 # Web (Firebase Hosting)
-flutter build web --release
+flutter build web --release --dart-define=APP_ENV=production
+firebase use production
 firebase deploy --only hosting
 ```
+
+## 6A. Environment Promotion
+
+- [ ] Staging project configured and mapped as `staging` in `.firebaserc`
+- [ ] Production project configured and mapped as `production` in `.firebaserc`
+- [ ] `develop` branch deploys automatically to staging
+- [ ] `main`/`v*` deploy requires GitHub `production` environment approval
+- [ ] FlutterFire env files regenerated:
+  - `lib/firebase_options_staging.dart`
+  - `lib/firebase_options_production.dart`
 
 ## 7. Store Listing Assets
 
@@ -76,6 +87,8 @@ firebase deploy --only hosting
 - [ ] Run all unit tests: `flutter test`
 - [ ] Run integration tests with emulators
 - [ ] Test release build on a physical device
+- [ ] Verify production run uses `APP_ENV=production`
+- [ ] Verify staging run uses `APP_ENV=staging`
 - [ ] Verify Firebase production project credentials (`google-services.json` / `GoogleService-Info.plist`)
 - [ ] Confirm Firestore security rules are deployed (`firebase deploy --only firestore:rules`)
 - [ ] Confirm Storage rules deployed (`firebase deploy --only storage`)

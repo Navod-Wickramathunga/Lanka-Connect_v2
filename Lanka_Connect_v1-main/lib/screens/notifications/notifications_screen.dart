@@ -96,18 +96,29 @@ class NotificationsScreen extends StatelessWidget {
                 final title = (data['title'] ?? 'Notification').toString();
                 final body = (data['body'] ?? '').toString();
                 final isRead = (data['isRead'] ?? false) == true;
+                final scheme = Theme.of(context).colorScheme;
 
                 return ListTile(
                   leading: Icon(
                     isRead ? Icons.notifications_none : Icons.notifications,
+                    color: isRead ? scheme.onSurfaceVariant : scheme.primary,
                   ),
-                  title: Text(title),
-                  subtitle: Text(body),
+                  title: Text(
+                    title,
+                    style: TextStyle(color: scheme.onSurface),
+                  ),
+                  subtitle: Text(
+                    body,
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  ),
                   trailing: isRead
                       ? null
                       : TextButton(
                           onPressed: () => _markRead(context, doc.id),
-                          child: const Text('Mark read'),
+                          child: Text(
+                            'Mark read',
+                            style: TextStyle(color: scheme.primary),
+                          ),
                         ),
                 );
               },

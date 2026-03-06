@@ -67,4 +67,51 @@ void main() {
       expect(Validators.optionalLongitude('-200'), isNotNull);
     });
   });
+
+  group('Validators.cardNumberField', () {
+    test('accepts valid luhn card', () {
+      expect(Validators.cardNumberField('4242424242424242'), isNull);
+    });
+
+    test('rejects invalid card', () {
+      expect(Validators.cardNumberField('4242424242424241'), isNotNull);
+    });
+  });
+
+  group('Validators.expiryField', () {
+    test('accepts future expiry', () {
+      expect(Validators.expiryField('12/99'), isNull);
+    });
+
+    test('rejects invalid format', () {
+      expect(Validators.expiryField('1229'), isNotNull);
+    });
+  });
+
+  group('Validators.cvvField', () {
+    test('accepts 3 or 4 digit cvv', () {
+      expect(Validators.cvvField('123'), isNull);
+      expect(Validators.cvvField('1234'), isNull);
+    });
+
+    test('rejects malformed cvv', () {
+      expect(Validators.cvvField('12a'), isNotNull);
+    });
+  });
+
+  group('Validators.bankReferenceField', () {
+    test('accepts alphanumeric and symbols', () {
+      expect(Validators.bankReferenceField('TXN-REF_001/AB'), isNull);
+    });
+
+    test('rejects too short reference', () {
+      expect(Validators.bankReferenceField('A1-2'), isNotNull);
+    });
+  });
+
+  group('Validators.normalizePhoneToE164', () {
+    test('normalizes local sri lanka number', () {
+      expect(Validators.normalizePhoneToE164('0771234567'), '+94771234567');
+    });
+  });
 }

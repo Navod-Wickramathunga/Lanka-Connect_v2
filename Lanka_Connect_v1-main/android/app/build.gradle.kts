@@ -12,6 +12,7 @@ android {
     namespace = "com.example.lanka_connect"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+    flavorDimensions += "env"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -29,6 +30,17 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         multiDexEnabled = true
+    }
+
+    productFlavors {
+        create("staging") {
+            dimension = "env"
+            applicationIdSuffix = ".staging"
+            versionNameSuffix = "-staging"
+        }
+        create("production") {
+            dimension = "env"
+        }
     }
 
     signingConfigs {

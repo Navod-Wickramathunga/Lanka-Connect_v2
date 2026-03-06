@@ -42,11 +42,11 @@ service cloud.firestore {
     }
 
     function validProviderAggregateUpdate() {
-      let changed = request.resource.data.diff(resource.data).changedKeys();
-      let hasOnlyAggregateKeys = changed.hasOnly(['averageRating', 'reviewCount', 'updatedAt']);
+      let affected = request.resource.data.diff(resource.data).affectedKeys();
+      let hasOnlyAggregateKeys = affected.hasOnly(['averageRating', 'reviewCount', 'updatedAt']);
       let newReviewCount = request.resource.data.reviewCount;
       let newAverageRating = request.resource.data.averageRating;
-      let oldReviewCount = resource.data.reviewCount;
+      let oldReviewCount = ('reviewCount' in resource.data) ? resource.data.reviewCount : 0;
       let expectedCount = oldReviewCount is int ? oldReviewCount + 1 : 1;
 
       return hasOnlyAggregateKeys
@@ -81,6 +81,10 @@ service cloud.firestore {
 
       // FCM token subcollection — users can manage their own tokens
       match /fcm_tokens/{tokenId} {
+        allow read, write: if isSelf(userId);
+      }
+
+      match /savedPaymentMethods/{methodId} {
         allow read, write: if isSelf(userId);
       }
     }
@@ -305,8 +309,9 @@ service cloud.firestore {
         && request.resource.data.providerId is string
         && request.resource.data.serviceId is string
         && request.resource.data.bookingId is string
-        && request.resource.data.gateway == 'demo'
-        && request.resource.data.status in ['success', 'failed']
+        && request.resource.data.gateway in ['demo', 'payhere', 'bank_transfer']
+        && request.resource.data.status in ['initiated', 'pending_gateway', 'success', 'failed', 'pending_verification', 'paid']
+        && request.resource.data.methodType in ['card', 'saved_card', 'bank_transfer']
         && (
           request.resource.data.amount is int ||
           request.resource.data.amount is float
@@ -316,9 +321,35 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.seekerId == request.auth.uid
         && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.providerId == request.resource.data.providerId
         && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.serviceId == request.resource.data.serviceId
-        && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.status == 'accepted';
+        && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.status == 'accepted'
+        && (
+          request.resource.data.gateway != 'bank_transfer' ||
+          request.resource.data.status == 'pending_verification'
+        );
 
-      allow update, delete: if false;
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /providerBankAccounts/{accountId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && (
+        isAdmin() ||
+        request.resource.data.providerId == request.auth.uid
+      );
+      allow update: if signedIn() && (
+        isAdmin() ||
+        resource.data.providerId == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /paymentReceipts/{receiptId} {
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create, update, delete: if isAdmin();
     }
 
     match /{document=**} {

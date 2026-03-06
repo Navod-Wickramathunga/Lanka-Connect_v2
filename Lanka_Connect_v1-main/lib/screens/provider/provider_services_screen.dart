@@ -439,7 +439,7 @@ class _ProviderServiceCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            height: 150,
+            height: 140,
             width: double.infinity,
             child: images.isNotEmpty
                 ? Image.network(
@@ -499,14 +499,18 @@ class _ProviderServiceCard extends StatelessWidget {
                     category,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: DesignTokens.textSubtle),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     displayLocation,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: DesignTokens.textSubtle),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   const Spacer(),
                   Row(

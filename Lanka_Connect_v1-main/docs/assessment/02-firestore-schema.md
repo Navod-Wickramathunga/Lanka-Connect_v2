@@ -98,7 +98,7 @@ Fields:
 
 ### `payments/{paymentId}`
 
-Purpose: demo payment records.
+Purpose: payment transaction attempts and outcomes.
 
 Fields:
 
@@ -106,9 +106,66 @@ Fields:
 - `providerId`: string
 - `serviceId`: string
 - `bookingId`: string
-- `gateway`: `demo`
-- `status`: `success | failed`
+- `methodType`: `card | saved_card | bank_transfer`
+- `gateway`: `payhere | bank_transfer | demo`
+- `status`: `initiated | pending_gateway | success | failed | pending_verification | paid`
 - `amount`: number
+- `grossAmount`: number
+- `discountAmount`: number
+- `netAmount`: number
+- `currency`: `LKR`
+- `gatewayRefs`: map
+- `receipt`: map
+- `createdAt`: timestamp
+- `updatedAt`: timestamp
+
+### `users/{userId}/savedPaymentMethods/{methodId}`
+
+Purpose: tokenized saved card methods for future use.
+
+Fields:
+
+- `userId`: string
+- `gateway`: `payhere`
+- `tokenRef`: string
+- `brand`: string
+- `last4`: string
+- `expiryMonth`: number
+- `expiryYear`: number
+- `isDefault`: bool
+- `status`: `active | inactive`
+- `createdAt`: timestamp
+- `updatedAt`: timestamp
+
+### `providerBankAccounts/{accountId}`
+
+Purpose: provider-owned bank details for direct transfer payments.
+
+Fields:
+
+- `providerId`: string
+- `bankName`: string
+- `accountName`: string
+- `accountNumberMasked`: string
+- `accountNumberEncryptedRef`: string
+- `branch`: string
+- `isActive`: bool
+- `createdAt`: timestamp
+
+### `paymentReceipts/{receiptId}`
+
+Purpose: delivery log for SMS and email receipts.
+
+Fields:
+
+- `paymentId`: string
+- `bookingId`: string
+- `userId`: string
+- `channel`: `sms | email`
+- `destinationMasked`: string
+- `status`: `sent | failed`
+- `providerMessageId`: string
+- `errorCode`: string
 - `createdAt`: timestamp
 
 ### `requests/{requestId}`

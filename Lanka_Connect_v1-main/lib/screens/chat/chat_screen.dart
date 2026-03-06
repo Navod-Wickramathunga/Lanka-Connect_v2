@@ -554,9 +554,12 @@ class _ChatBubble extends StatelessWidget {
     final timeColor = isDark
         ? Colors.white.withValues(alpha: 0.5)
         : Colors.black.withValues(alpha: 0.45);
-    final alignment = isMine
+    final crossAlignment = isMine
         ? CrossAxisAlignment.end
         : CrossAxisAlignment.start;
+    final rowAlignment = isMine
+        ? MainAxisAlignment.end
+        : MainAxisAlignment.start;
     final margin = isMine
         ? const EdgeInsets.only(left: 64, right: 4, top: 2, bottom: 2)
         : const EdgeInsets.only(right: 64, left: 4, top: 2, bottom: 2);
@@ -567,47 +570,52 @@ class _ChatBubble extends StatelessWidget {
       bottomRight: isMine ? Radius.zero : const Radius.circular(12),
     );
 
+    final maxBubbleWidth = MediaQuery.of(context).size.width * 0.76;
+
     return Container(
       margin: margin,
-      child: Column(
-        crossAxisAlignment: alignment,
+      child: Row(
+        mainAxisAlignment: rowAlignment,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: bubbleColor,
-              borderRadius: borderRadius,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 2,
-                  offset: const Offset(0, 1),
-                ),
-              ],
-            ),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxBubbleWidth),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: crossAlignment,
               children: [
-                if (senderName != null && !isMine)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      senderName!,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 12,
-                        color: isDark
-                            ? const Color(0xFF53BDEB)
-                            : const Color(0xFF075E54),
-                      ),
-                    ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
                   ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Flexible(
-                      child: Text(
+                  decoration: BoxDecoration(
+                    color: bubbleColor,
+                    borderRadius: borderRadius,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.06),
+                        blurRadius: 2,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (senderName != null && !isMine)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            senderName!,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                              color: isDark
+                                  ? const Color(0xFF53BDEB)
+                                  : const Color(0xFF075E54),
+                            ),
+                          ),
+                        ),
+                      Text(
                         text,
                         style: TextStyle(
                           fontSize: 15,
@@ -615,15 +623,18 @@ class _ChatBubble extends StatelessWidget {
                           height: 1.3,
                         ),
                       ),
-                    ),
-                    if (time.isNotEmpty) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        time,
-                        style: TextStyle(fontSize: 11, color: timeColor),
-                      ),
+                      if (time.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.bottomRight,
+                          child: Text(
+                            time,
+                            style: TextStyle(fontSize: 11, color: timeColor),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ],
             ),

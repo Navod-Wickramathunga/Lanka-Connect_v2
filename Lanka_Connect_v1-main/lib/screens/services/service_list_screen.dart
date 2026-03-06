@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../../models/service_discovery_filter.dart';
 import '../../ui/mobile/mobile_components.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
@@ -18,9 +20,26 @@ import 'service_detail_screen.dart';
 import 'service_map_screen.dart';
 
 class ServiceListScreen extends StatefulWidget {
-  const ServiceListScreen({super.key, this.showOnlyMine = false});
+  const ServiceListScreen({
+    super.key,
+    this.showOnlyMine = false,
+    this.initialFilter,
+    this.initialCategory,
+    this.initialQuery,
+    this.initialDistrict,
+    this.initialCity,
+    this.initialNearMe,
+    this.autoApplyInitialFilters = false,
+  });
 
   final bool showOnlyMine;
+  final ServiceDiscoveryFilter? initialFilter;
+  final String? initialCategory;
+  final String? initialQuery;
+  final String? initialDistrict;
+  final String? initialCity;
+  final bool? initialNearMe;
+  final bool autoApplyInitialFilters;
 
   @override
   State<ServiceListScreen> createState() => _ServiceListScreenState();
@@ -40,33 +59,43 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
   ];
   static const double _defaultRadiusKm = 10;
   static const double _maxRadiusKm = 100;
-  static const double _radiusStepKm = 10;
   static const int _pageSize = 20;
 
   int _currentLimit = _pageSize;
 
   final _categoryController = TextEditingController();
+  final _queryController = TextEditingController();
   final _districtController = TextEditingController();
   final _cityController = TextEditingController();
   final _minPriceController = TextEditingController();
   final _maxPriceController = TextEditingController();
 
   String _category = '';
+  String _query = '';
   String _district = '';
   String _city = '';
   bool _nearMe = false;
   bool _onlyWithCoordinates = false;
   bool _requestingLocation = false;
   String? _nearMeError;
+  _NearMeStatus _nearMeStatus = _NearMeStatus.idle;
   double _radiusKm = _defaultRadiusKm;
   double? _minPrice;
   double? _maxPrice;
   LatLng? _currentPosition;
   bool _autoNearMeRequested = false;
+  bool _showFilters = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _hydrateInitialFilters();
+  }
 
   @override
   void dispose() {
     _categoryController.dispose();
+    _queryController.dispose();
     _districtController.dispose();
     _cityController.dispose();
     _minPriceController.dispose();
@@ -75,13 +104,40 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
   }
 
   void _applyFilters() {
+    FocusScope.of(context).unfocus();
     setState(() {
       _category = _categoryController.text.trim();
+      _query = _queryController.text.trim();
       _district = _districtController.text.trim();
       _city = _cityController.text.trim();
       _minPrice = double.tryParse(_minPriceController.text.trim());
       _maxPrice = double.tryParse(_maxPriceController.text.trim());
     });
+  }
+
+  void _hydrateInitialFilters() {
+    final filter = widget.initialFilter;
+    _categoryController.text =
+        filter?.normalizedCategory ?? (widget.initialCategory ?? '').trim();
+    _queryController.text =
+        filter?.normalizedQuery ?? (widget.initialQuery ?? '').trim();
+    _districtController.text =
+        filter?.normalizedDistrict ?? (widget.initialDistrict ?? '').trim();
+    _cityController.text =
+        filter?.normalizedCity ?? (widget.initialCity ?? '').trim();
+
+    _category = _categoryController.text;
+    _query = _queryController.text;
+    _district = _districtController.text;
+    _city = _cityController.text;
+
+    _showFilters = filter?.autoApply ?? widget.autoApplyInitialFilters;
+    if ((filter?.nearMe ?? widget.initialNearMe) == true) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _handleNearMeToggle(true);
+      });
+    }
   }
 
   void _toggleQuickCategory(String category) {
@@ -99,7 +155,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
 
     if (widget.showOnlyMine) {
       query = query.where('providerId', isEqualTo: userId);
-    } else if (role == UserRoles.seeker) {
+    } else if (role == UserRoles.seeker || role == UserRoles.guest) {
       query = query.where('status', isEqualTo: 'approved');
     }
 
@@ -113,6 +169,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
       setState(() {
         _nearMe = false;
         _nearMeError = null;
+        _nearMeStatus = _NearMeStatus.idle;
       });
       return;
     }
@@ -120,33 +177,45 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
     setState(() {
       _requestingLocation = true;
       _nearMeError = null;
+      _nearMeStatus = _NearMeStatus.requesting;
     });
 
-    final result = await _resolveCurrentPosition();
+    final result = await _resolveCurrentPositionDetailed();
 
     if (!mounted) return;
     setState(() {
       _requestingLocation = false;
-      _nearMe = result != null;
-      _currentPosition = result;
-      if (result == null) {
+      _nearMe = result.point != null;
+      _currentPosition = result.point;
+      _nearMeStatus = result.status;
+      if (result.point == null) {
         _nearMeError = 'Location unavailable. Falling back to city/district.';
       }
     });
   }
 
-  Future<LatLng?> _resolveCurrentPosition() async {
+  Future<_NearMeResult> _resolveCurrentPositionDetailed() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return null;
+      if (!serviceEnabled) {
+        return const _NearMeResult(
+          status: _NearMeStatus.serviceDisabled,
+          point: null,
+        );
+      }
 
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return null;
+      if (permission == LocationPermission.denied) {
+        return const _NearMeResult(status: _NearMeStatus.denied, point: null);
+      }
+      if (permission == LocationPermission.deniedForever) {
+        return const _NearMeResult(
+          status: _NearMeStatus.deniedForever,
+          point: null,
+        );
       }
 
       final pos = await Geolocator.getCurrentPosition(
@@ -154,16 +223,22 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
           accuracy: LocationAccuracy.high,
         ),
       );
-      return LatLng(pos.latitude, pos.longitude);
+      return _NearMeResult(
+        status: _NearMeStatus.ready,
+        point: LatLng(pos.latitude, pos.longitude),
+      );
     } catch (_) {
-      return null;
+      return const _NearMeResult(
+        status: _NearMeStatus.unavailable,
+        point: null,
+      );
     }
   }
 
   void _autoEnableNearMeIfNeeded(String role) {
     if (_autoNearMeRequested ||
         widget.showOnlyMine ||
-        role != UserRoles.seeker) {
+        (role != UserRoles.seeker && role != UserRoles.guest)) {
       return;
     }
     _autoNearMeRequested = true;
@@ -172,6 +247,8 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
       _handleNearMeToggle(true);
     });
   }
+
+  static const List<double> _radiusOptions = [2, 5, 10, 20, 25, 50, 75, 100];
 
   void _expandRadius() {
     if (_radiusKm >= _maxRadiusKm) {
@@ -182,8 +259,13 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
       );
       return;
     }
+    // Snap to next valid dropdown option
+    final next = _radiusOptions.firstWhere(
+      (v) => v > _radiusKm,
+      orElse: () => _maxRadiusKm,
+    );
     setState(() {
-      _radiusKm = (_radiusKm + _radiusStepKm).clamp(0, _maxRadiusKm);
+      _radiusKm = next;
     });
   }
 
@@ -199,6 +281,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
     final effectiveCity = useGps ? '' : (_nearMe ? userCity : _city);
 
     final normalizedCategory = _category.toLowerCase();
+    final normalizedQuery = _query.toLowerCase();
     final normalizedDistrict = effectiveDistrict.toLowerCase();
     final normalizedCity = effectiveCity.toLowerCase();
 
@@ -206,6 +289,8 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
     for (final doc in docs) {
       final data = doc.data();
       final category = (data['category'] ?? '').toString().toLowerCase();
+      final title = (data['title'] ?? '').toString().toLowerCase();
+      final description = (data['description'] ?? '').toString().toLowerCase();
       final district = (data['district'] ?? '').toString().toLowerCase();
       final city = (data['city'] ?? '').toString().toLowerCase();
       final price = (data['price'] is num)
@@ -214,6 +299,12 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
       final point = GeoUtils.extractPoint(data);
 
       if (normalizedCategory.isNotEmpty && category != normalizedCategory) {
+        continue;
+      }
+      if (normalizedQuery.isNotEmpty &&
+          !title.contains(normalizedQuery) &&
+          !description.contains(normalizedQuery) &&
+          !category.contains(normalizedQuery)) {
         continue;
       }
       if (normalizedDistrict.isNotEmpty && district != normalizedDistrict) {
@@ -338,6 +429,20 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
     );
   }
 
+  int _headerItemCount(
+    List<_ServiceViewItem> items,
+    bool isLoading,
+    bool hasError,
+    bool hasMore,
+  ) {
+    // Header slots: intro (if !showOnlyMine), chips (if !showOnlyMine), filters
+    int headers = 1; // filters always
+    if (!widget.showOnlyMine) headers += 2; // intro + chips
+    if (isLoading || hasError || items.isEmpty) return headers + 1;
+    // count bar + items + optional load-more
+    return headers + 1 + items.length + (hasMore ? 1 : 0);
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -354,316 +459,357 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
         final userCity = (userData['city'] ?? '').toString().trim();
         _autoEnableNearMeIfNeeded(role);
 
-        final content = Column(
-          children: [
-            if (!widget.showOnlyMine)
-              MobilePageIntro(
-                title: 'Find Services',
-                subtitle: 'Discover top-rated professionals near you',
-              ),
-            if (!widget.showOnlyMine)
-              SizedBox(
-                height: 48,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  children: _quickCategories.map((category) {
-                    final selected =
-                        _category.toLowerCase() == category.toLowerCase();
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: FilterChip(
-                        selected: selected,
-                        showCheckmark: false,
-                        label: Text(category),
-                        onSelected: (_) => _toggleQuickCategory(category),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-            if (kIsWeb)
-              Padding(
-                padding: const EdgeInsets.all(WebTokens.spacingMd),
-                child: Card(
-                  elevation: 0,
-                  color: WebTokens.surfaceMuted,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(WebTokens.radiusMd),
-                    side: const BorderSide(color: WebTokens.border),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(WebTokens.spacingMd),
-                    child: _filters(),
-                  ),
-                ),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: MobileSectionCard(child: _filters()),
-              ),
-            Expanded(
-              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: _buildQuery(role, user.uid).snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (snapshot.hasError) {
-                    return Center(
-                      child: Text('Failed to load services: ${snapshot.error}'),
-                    );
-                  }
-
-                  final items = _applyClientFilters(
+        final content = StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _buildQuery(role, user.uid).snapshots(),
+          builder: (context, snapshot) {
+            final items = snapshot.connectionState == ConnectionState.waiting
+                ? <_ServiceViewItem>[]
+                : snapshot.hasError
+                ? <_ServiceViewItem>[]
+                : _applyClientFilters(
                     snapshot.data?.docs ?? [],
                     userDistrict: userDistrict,
                     userCity: userCity,
                   );
+            final isLoading =
+                snapshot.connectionState == ConnectionState.waiting;
+            final hasError = snapshot.hasError;
+            final totalDocs = (snapshot.data?.docs ?? []).length;
+            final hasMore =
+                !isLoading && !hasError && totalDocs >= _currentLimit;
 
-                  if (items.isEmpty) {
-                    if (_nearMe) {
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text('No nearby services found.'),
-                              const SizedBox(height: 8),
-                              Text('Current radius: ${_radiusKm.toInt()} km'),
-                              const SizedBox(height: 12),
-                              ElevatedButton(
-                                onPressed: _expandRadius,
-                                child: const Text('Expand radius (+10 km)'),
-                              ),
-                              if (_radiusKm >= _maxRadiusKm) ...[
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Maximum radius reached. Try district/city filters.',
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
-                            ],
+            return ListView.builder(
+              padding: const EdgeInsets.only(bottom: 96),
+              itemCount: _headerItemCount(items, isLoading, hasError, hasMore),
+              itemBuilder: (context, index) {
+                // --- Header items (intro + chips + filters) ---
+                int cursor = 0;
+
+                // 0: Intro
+                if (!widget.showOnlyMine) {
+                  if (index == cursor) {
+                    return MobilePageIntro(
+                      title: 'Find Services',
+                      subtitle: 'Discover top-rated professionals near you',
+                    );
+                  }
+                  cursor++;
+                }
+
+                // 1: Category chips
+                if (!widget.showOnlyMine) {
+                  if (index == cursor) {
+                    return SizedBox(
+                      height: 48,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        children: _quickCategories.map((category) {
+                          final selected =
+                              _category.toLowerCase() == category.toLowerCase();
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: FilterChip(
+                              selected: selected,
+                              showCheckmark: false,
+                              label: Text(category),
+                              onSelected: (_) => _toggleQuickCategory(category),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    );
+                  }
+                  cursor++;
+                }
+
+                // 2: Filters
+                if (index == cursor) {
+                  if (kIsWeb) {
+                    final isDark =
+                        Theme.of(context).brightness == Brightness.dark;
+                    return Padding(
+                      padding: const EdgeInsets.all(WebTokens.spacingMd),
+                      child: Card(
+                        elevation: 0,
+                        color: isDark
+                            ? const Color(0xFF111C31)
+                            : WebTokens.surfaceMuted,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            WebTokens.radiusMd,
                           ),
+                          side: BorderSide(
+                            color: isDark
+                                ? const Color(0xFF334155)
+                                : WebTokens.border,
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(WebTokens.spacingMd),
+                          child: _filters(),
+                        ),
+                      ),
+                    );
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: MobileSectionCard(
+                      padding: EdgeInsets.zero,
+                      child: Theme(
+                        data: Theme.of(
+                          context,
+                        ).copyWith(dividerColor: Colors.transparent),
+                        child: ExpansionTile(
+                          title: const Text('Filters'),
+                          initiallyExpanded: _showFilters,
+                          onExpansionChanged: (expanded) {
+                            setState(() => _showFilters = expanded);
+                          },
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                              child: _filters(),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                cursor++;
+
+                // 3: Loading / Error / Empty states
+                if (isLoading) {
+                  if (index == cursor) {
+                    return const Padding(
+                      padding: EdgeInsets.all(48),
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  return const SizedBox.shrink();
+                }
+                if (hasError) {
+                  if (index == cursor) {
+                    return Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Center(
+                        child: Text(
+                          'Failed to load services: ${snapshot.error}',
+                        ),
+                      ),
+                    );
+                  }
+                  return const SizedBox.shrink();
+                }
+                if (items.isEmpty) {
+                  if (index == cursor) {
+                    if (_nearMe) {
+                      return Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('No nearby services found.'),
+                            const SizedBox(height: 8),
+                            Text('Current radius: ${_radiusKm.toInt()} km'),
+                            const SizedBox(height: 12),
+                            ElevatedButton(
+                              onPressed: _expandRadius,
+                              child: const Text('Expand radius'),
+                            ),
+                            if (_radiusKm >= _maxRadiusKm) ...[
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Maximum radius reached. Try district/city filters.',
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ],
                         ),
                       );
                     }
                     if (kIsWeb) {
-                      return const Center(child: Text('No services found.'));
+                      return const Padding(
+                        padding: EdgeInsets.all(48),
+                        child: Center(child: Text('No services found.')),
+                      );
                     }
                     return const MobileEmptyState(
                       title: 'No services found.',
                       icon: Icons.search_off,
                     );
                   }
+                  return const SizedBox.shrink();
+                }
 
-                  final totalDocs = (snapshot.data?.docs ?? []).length;
-                  final hasMore = totalDocs >= _currentLimit;
-
-                  return Column(
-                    children: [
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                '${items.length} service${items.length == 1 ? '' : 's'}',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                              ElevatedButton.icon(
-                                onPressed: () => _openMapView(items),
-                                icon: const Icon(Icons.map),
-                                label: const Text('Map view'),
-                              ),
-                            ],
-                          ),
+                // 4: Count + Map view bar
+                if (index == cursor) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '${items.length} service${items.length == 1 ? '' : 's'}',
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
+                        ElevatedButton.icon(
+                          onPressed: () => _openMapView(items),
+                          icon: const Icon(Icons.map),
+                          label: const Text('Map view'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                cursor++;
+
+                // 5+: Service items
+                final serviceIndex = index - cursor;
+                if (serviceIndex >= items.length) {
+                  // Load more button
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Center(
+                      child: OutlinedButton(
+                        onPressed: () => setState(() {
+                          _currentLimit += _pageSize;
+                        }),
+                        child: const Text('Load more'),
                       ),
-                      Expanded(
-                        child: ListView.builder(
-                          itemCount: items.length + (hasMore ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            // "Load more" button at the end
-                            if (index == items.length) {
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 16,
-                                ),
-                                child: Center(
-                                  child: OutlinedButton(
-                                    onPressed: () => setState(() {
-                                      _currentLimit += _pageSize;
-                                    }),
-                                    child: const Text('Load more'),
-                                  ),
+                    ),
+                  );
+                }
+
+                final item = items[serviceIndex];
+                final data = item.doc.data();
+                final point = item.point;
+                final distance = item.distanceKm;
+                final status = (data['status'] ?? 'pending').toString();
+                final onSurface = Theme.of(context).colorScheme.onSurface;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Column(
+                        children: [
+                          Builder(
+                            builder: (context) {
+                              final rawImages = data['imageUrls'];
+                              final imageUrls =
+                                  rawImages is List && rawImages.isNotEmpty
+                                  ? rawImages
+                                  : null;
+                              if (imageUrls == null) {
+                                return const SizedBox.shrink();
+                              }
+                              return ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.network(
+                                  imageUrls.first.toString(),
+                                  height: 140,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                  loadingBuilder: (context, child, progress) {
+                                    if (progress == null) return child;
+                                    return const SizedBox(
+                                      height: 140,
+                                      child: Center(
+                                        child: CircularProgressIndicator(),
+                                      ),
+                                    );
+                                  },
+                                  errorBuilder: (context, error, stack) =>
+                                      const SizedBox.shrink(),
                                 ),
                               );
-                            }
-                            final item = items[index];
-                            final data = item.doc.data();
-                            final point = item.point;
-                            final distance = item.distanceKm;
-                            final status = (data['status'] ?? 'pending')
-                                .toString();
-                            final onSurface = Theme.of(
-                              context,
-                            ).colorScheme.onSurface;
-                            return AnimatedContainer(
-                              duration: const Duration(milliseconds: 180),
-                              margin: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
+                            },
+                          ),
+                          ListTile(
+                            title: Text(
+                              data['title'] ?? 'Service',
+                              style: TextStyle(color: onSurface),
+                            ),
+                            subtitle: Text(
+                              '${data['category'] ?? ''} | ${_displayLocation(data)} | LKR ${data['price'] ?? ''}',
+                              style: TextStyle(
+                                color: onSurface.withValues(alpha: 0.75),
                               ),
-                              child: Card(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(8),
-                                  child: Column(
-                                    children: [
-                                      // Service image thumbnail
-                                      Builder(
-                                        builder: (context) {
-                                          final rawImages = data['imageUrls'];
-                                          final imageUrls =
-                                              rawImages is List &&
-                                                  rawImages.isNotEmpty
-                                              ? rawImages
-                                              : null;
-                                          if (imageUrls == null) {
-                                            return const SizedBox.shrink();
-                                          }
-                                          return ClipRRect(
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                            child: Image.network(
-                                              imageUrls.first.toString(),
-                                              height: 140,
-                                              width: double.infinity,
-                                              fit: BoxFit.cover,
-                                              loadingBuilder:
-                                                  (context, child, progress) {
-                                                    if (progress == null) {
-                                                      return child;
-                                                    }
-                                                    return const SizedBox(
-                                                      height: 140,
-                                                      child: Center(
-                                                        child:
-                                                            CircularProgressIndicator(),
-                                                      ),
-                                                    );
-                                                  },
-                                              errorBuilder:
-                                                  (context, error, stack) =>
-                                                      const SizedBox.shrink(),
-                                            ),
-                                          );
-                                        },
+                            ),
+                            trailing: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                MobileStatusChip(
+                                  label: status,
+                                  color: status == 'approved'
+                                      ? MobileTokens.secondary
+                                      : status == 'rejected'
+                                      ? Colors.red
+                                      : MobileTokens.accent,
+                                ),
+                                if (_nearMe)
+                                  Text(
+                                    distance != null
+                                        ? GeoUtils.formatKm(distance)
+                                        : 'Distance N/A',
+                                    style: TextStyle(
+                                      color: onSurface.withValues(alpha: 0.75),
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    ServiceDetailScreen(serviceId: item.doc.id),
+                              ),
+                            ),
+                          ),
+                          if (point != null)
+                            ServiceMapPreview(
+                              point: point,
+                              title: (data['title'] ?? 'Service').toString(),
+                              height: 130,
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => ServiceMapScreen(
+                                    items: [
+                                      ServiceMapItem(
+                                        serviceId: item.doc.id,
+                                        title: (data['title'] ?? 'Service')
+                                            .toString(),
+                                        locationLabel: _displayLocation(data),
+                                        priceLabel:
+                                            'LKR ${data['price'] ?? ''}',
+                                        point: point,
+                                        isApproximate: false,
+                                        pointSource: 'Exact',
+                                        category: (data['category'] ?? '')
+                                            .toString(),
+                                        providerId: (data['providerId'] ?? '')
+                                            .toString(),
                                       ),
-                                      ListTile(
-                                        title: Text(
-                                          data['title'] ?? 'Service',
-                                          style: TextStyle(color: onSurface),
-                                        ),
-                                        subtitle: Text(
-                                          '${data['category'] ?? ''} | ${_displayLocation(data)} | LKR ${data['price'] ?? ''}',
-                                          style: TextStyle(
-                                            color: onSurface.withValues(
-                                              alpha: 0.75,
-                                            ),
-                                          ),
-                                        ),
-                                        trailing: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            MobileStatusChip(
-                                              label: status,
-                                              color: status == 'approved'
-                                                  ? MobileTokens.secondary
-                                                  : status == 'rejected'
-                                                  ? Colors.red
-                                                  : MobileTokens.accent,
-                                            ),
-                                            if (_nearMe)
-                                              Text(
-                                                distance != null
-                                                    ? GeoUtils.formatKm(
-                                                        distance,
-                                                      )
-                                                    : 'Distance N/A',
-                                                style: TextStyle(
-                                                  color: onSurface.withValues(
-                                                    alpha: 0.75,
-                                                  ),
-                                                  fontSize: 11,
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                        onTap: () => Navigator.of(context).push(
-                                          MaterialPageRoute(
-                                            builder: (_) => ServiceDetailScreen(
-                                              serviceId: item.doc.id,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      if (point != null)
-                                        ServiceMapPreview(
-                                          point: point,
-                                          title: (data['title'] ?? 'Service')
-                                              .toString(),
-                                          height: 130,
-                                          onTap: () => Navigator.of(context).push(
-                                            MaterialPageRoute(
-                                              builder: (_) => ServiceMapScreen(
-                                                items: [
-                                                  ServiceMapItem(
-                                                    serviceId: item.doc.id,
-                                                    title:
-                                                        (data['title'] ??
-                                                                'Service')
-                                                            .toString(),
-                                                    locationLabel:
-                                                        _displayLocation(data),
-                                                    priceLabel:
-                                                        'LKR ${data['price'] ?? ''}',
-                                                    point: point,
-                                                    isApproximate: false,
-                                                    pointSource: 'Exact',
-                                                    category:
-                                                        (data['category'] ?? '')
-                                                            .toString(),
-                                                    providerId:
-                                                        (data['providerId'] ??
-                                                                '')
-                                                            .toString(),
-                                                  ),
-                                                ],
-                                                initialCenter: point,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
                                     ],
+                                    initialCenter: point,
                                   ),
                                 ),
                               ),
-                            );
-                          },
-                        ),
+                            ),
+                        ],
                       ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
         );
 
         if (!kIsWeb) {
@@ -697,6 +843,20 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
         children: [
           Row(
             children: [
+              Expanded(
+                child: TextField(
+                  controller: _queryController,
+                  decoration: const InputDecoration(
+                    labelText: 'Search',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: TextField(
                   controller: _categoryController,
@@ -767,6 +927,39 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
                 style: TextStyle(fontSize: 12),
               ),
             ),
+          if (_nearMeStatus == _NearMeStatus.serviceDisabled)
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Location services are disabled. Please enable GPS.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+          if (_nearMeStatus == _NearMeStatus.denied)
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Location permission denied. You can retry near me.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+          if (_nearMeStatus == _NearMeStatus.deniedForever)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  const Text(
+                    'Location permission denied permanently.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  TextButton(
+                    onPressed: openAppSettings,
+                    child: const Text('Open Settings'),
+                  ),
+                ],
+              ),
+            ),
           if (_nearMeError != null)
             Align(
               alignment: Alignment.centerLeft,
@@ -786,11 +979,11 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
                         vertical: 10,
                       ),
                     ),
-                    items: const [2.0, 5.0, 10.0, 25.0]
+                    items: _radiusOptions
                         .map(
-                          (value) => DropdownMenuItem<double>(
-                            value: value,
-                            child: Text('${value.toInt()} km'),
+                          (v) => DropdownMenuItem<double>(
+                            value: v,
+                            child: Text('${v.toInt()} km'),
                           ),
                         )
                         .toList(),
@@ -880,4 +1073,21 @@ class _ServiceViewItem {
   final QueryDocumentSnapshot<Map<String, dynamic>> doc;
   final LatLng? point;
   final double? distanceKm;
+}
+
+enum _NearMeStatus {
+  idle,
+  requesting,
+  ready,
+  denied,
+  deniedForever,
+  serviceDisabled,
+  unavailable,
+}
+
+class _NearMeResult {
+  const _NearMeResult({required this.status, required this.point});
+
+  final _NearMeStatus status;
+  final LatLng? point;
 }

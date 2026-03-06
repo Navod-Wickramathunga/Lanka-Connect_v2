@@ -1,5 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../ui/mobile/mobile_tokens.dart';
+import '../utils/firestore_refs.dart';
 
 /// Data for a single promotion card.
 class PromotionData {
@@ -10,6 +12,7 @@ class PromotionData {
     required this.expiry,
     required this.color,
     required this.icon,
+    this.linkedCategory,
   });
   final String title;
   final String description;
@@ -17,16 +20,61 @@ class PromotionData {
   final String expiry;
   final Color color;
   final IconData icon;
+  final String? linkedCategory;
+
+  /// Map of icon names to IconData for Firestore-driven icons.
+  static const _iconMap = <String, IconData>{
+    'cleaning_services': Icons.cleaning_services,
+    'plumbing': Icons.plumbing,
+    'electrical_services': Icons.electrical_services,
+    'carpenter': Icons.carpenter,
+    'format_paint': Icons.format_paint,
+    'grass': Icons.grass,
+    'local_shipping': Icons.local_shipping,
+    'spa': Icons.spa,
+    'school': Icons.school,
+    'ac_unit': Icons.ac_unit,
+    'yard': Icons.yard,
+    'handyman': Icons.handyman,
+    'home_repair_service': Icons.home_repair_service,
+    'local_offer': Icons.local_offer,
+    'star': Icons.star,
+  };
+
+  /// Create from Firestore document data.
+  factory PromotionData.fromMap(Map<String, dynamic> data) {
+    Color color;
+    try {
+      final hex = (data['colorHex'] ?? '').toString().replaceAll('#', '');
+      color = Color(int.parse('FF$hex', radix: 16));
+    } catch (_) {
+      color = const Color(0xFFF43F5E);
+    }
+    final iconName = (data['iconName'] ?? 'local_offer').toString();
+    return PromotionData(
+      title: (data['title'] ?? '').toString(),
+      description: (data['description'] ?? '').toString(),
+      discount: (data['discount'] ?? '').toString(),
+      expiry: (data['expiry'] ?? 'Limited Time').toString(),
+      color: color,
+      icon: _iconMap[iconName] ?? Icons.local_offer,
+      linkedCategory: (data['linkedCategory'] ?? '').toString(),
+    );
+  }
 }
 
 /// Exclusive offers section matching the React PromotionSection design.
+/// Reads active promotions from the `promotions` Firestore collection.
+/// Falls back to hardcoded defaults if no documents exist.
 class PromotionSection extends StatelessWidget {
   const PromotionSection({super.key, this.onViewAll, this.onPromoTap});
 
   final VoidCallback? onViewAll;
-  final void Function(int index)? onPromoTap;
 
-  static const _promotions = [
+  /// Called when a promotion card is tapped, with the linked category name.
+  final void Function(String category)? onPromoTap;
+
+  static const _defaultPromotions = [
     PromotionData(
       title: 'Weekend Cleaner',
       description: 'Get your house sparkling clean for the weekend.',
@@ -34,6 +82,7 @@ class PromotionSection extends StatelessWidget {
       expiry: 'Ends Sunday',
       color: Color(0xFFF43F5E),
       icon: Icons.cleaning_services,
+      linkedCategory: 'Cleaning',
     ),
     PromotionData(
       title: 'AC Service',
@@ -42,6 +91,7 @@ class PromotionSection extends StatelessWidget {
       expiry: 'Limited Time',
       color: Color(0xFF3B82F6),
       icon: Icons.ac_unit,
+      linkedCategory: 'Electrical',
     ),
     PromotionData(
       title: 'Garden Makeover',
@@ -50,6 +100,7 @@ class PromotionSection extends StatelessWidget {
       expiry: 'Valid 24h',
       color: Color(0xFF22C55E),
       icon: Icons.yard,
+      linkedCategory: 'Gardening',
     ),
   ];
 
@@ -57,79 +108,99 @@ class PromotionSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Section header
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF43F5E).withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  Icons.local_offer,
-                  color: isDark
-                      ? const Color(0xFFFDA4AF)
-                      : const Color(0xFFF43F5E),
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Exclusive Offers',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const Spacer(),
-              TextButton(
-                onPressed: onViewAll,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'View All',
-                      style: TextStyle(
-                        color: MobileTokens.primary,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirestoreRefs.promotions()
+          .where('active', isEqualTo: true)
+          .orderBy('order')
+          .snapshots(),
+      builder: (context, snapshot) {
+        final List<PromotionData> promotions;
+        if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
+          promotions = snapshot.data!.docs
+              .map((d) => PromotionData.fromMap(d.data()))
+              .toList();
+        } else {
+          promotions = _defaultPromotions;
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Section header
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF43F5E).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      Icons.arrow_forward,
-                      size: 14,
-                      color: MobileTokens.primary,
+                    child: Icon(
+                      Icons.local_offer,
+                      color: isDark
+                          ? const Color(0xFFFDA4AF)
+                          : const Color(0xFFF43F5E),
+                      size: 20,
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Exclusive Offers',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: onViewAll,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'View All',
+                          style: TextStyle(
+                            color: MobileTokens.primary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.arrow_forward,
+                          size: 14,
+                          color: MobileTokens.primary,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 4),
-        // Promotion cards
-        SizedBox(
-          height: 130,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            itemCount: _promotions.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 12),
-            itemBuilder: (context, index) {
-              return _PromotionCard(
-                promo: _promotions[index],
-                onTap: onPromoTap != null ? () => onPromoTap!(index) : null,
-              );
-            },
-          ),
-        ),
-      ],
+            ),
+            const SizedBox(height: 4),
+            // Promotion cards
+            SizedBox(
+              height: 130,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                itemCount: promotions.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) {
+                  final promo = promotions[index];
+                  return _PromotionCard(
+                    promo: promo,
+                    onTap: onPromoTap != null
+                        ? () => onPromoTap!(promo.linkedCategory ?? '')
+                        : null,
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

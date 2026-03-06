@@ -7,12 +7,16 @@ class MobileGradientHeader extends StatelessWidget {
     required this.title,
     this.subtitle,
     required this.accentColor,
+    this.showBackButton = false,
+    this.onBackPressed,
     this.trailing,
   });
 
   final String title;
   final String? subtitle;
   final Color accentColor;
+  final bool showBackButton;
+  final VoidCallback? onBackPressed;
   final Widget? trailing;
 
   @override
@@ -25,7 +29,10 @@ class MobileGradientHeader extends StatelessWidget {
         borderRadius: BorderRadius.circular(MobileTokens.radiusXl),
         gradient: LinearGradient(
           colors: isDark
-              ? [accentColor.withValues(alpha: 0.8), MobileTokens.backgroundDark]
+              ? [
+                  accentColor.withValues(alpha: 0.8),
+                  MobileTokens.backgroundDark,
+                ]
               : [accentColor, MobileTokens.primary],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -40,6 +47,18 @@ class MobileGradientHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
+          if (showBackButton) ...[
+            IconButton(
+              onPressed:
+                  onBackPressed ?? () => Navigator.of(context).maybePop(),
+              icon: Icon(
+                Icons.arrow_back,
+                color: Theme.of(context).colorScheme.onPrimary,
+              ),
+              tooltip: 'Back',
+            ),
+            const SizedBox(width: 4),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -117,15 +136,17 @@ class MobilePageIntro extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: MobileTokens.inkMuted,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withAlpha(153),
                   ),
                 ),
               ],
@@ -158,7 +179,11 @@ class MobileStatusChip extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12),
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
       ),
     );
   }
@@ -233,10 +258,7 @@ class MobileStatePanel extends StatelessWidget {
                 style: const TextStyle(color: MobileTokens.inkMuted),
               ),
             ],
-            if (action != null) ...[
-              const SizedBox(height: 12),
-              action!,
-            ],
+            if (action != null) ...[const SizedBox(height: 12), action!],
           ],
         ),
       ),

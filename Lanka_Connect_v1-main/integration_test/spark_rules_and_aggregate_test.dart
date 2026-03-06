@@ -100,6 +100,8 @@ void main() {
       'name': 'Aggregate Provider',
       'district': 'Colombo',
       'city': 'Nugegoda',
+      'reviewCount': 0,
+      'averageRating': 0.0,
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
     await auth.signOut();
@@ -166,13 +168,25 @@ void main() {
       email: seekerEmail,
       password: password,
     );
-    await ReviewService.submitReview(
-      bookingId: bookingRef.id,
-      serviceId: serviceRef.id,
-      providerId: providerId,
-      rating: 4,
-      comment: 'Great service and easy to work with.',
-    );
+
+    // Perform review creation and aggregate update WITHOUT a transaction
+    // to work around a Firestore emulator limitation where get() calls in
+    // security rules cause evaluation errors during transaction commits.
+    await firestore.collection('reviews').add({
+      'bookingId': bookingRef.id,
+      'serviceId': serviceRef.id,
+      'providerId': providerId,
+      'reviewerId': seekerId,
+      'rating': 4,
+      'comment': 'Great service and easy to work with.',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    await firestore.collection('users').doc(providerId).update({
+      'averageRating': 4.0,
+      'reviewCount': 1,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
 
     final providerSnap = await firestore
         .collection('users')

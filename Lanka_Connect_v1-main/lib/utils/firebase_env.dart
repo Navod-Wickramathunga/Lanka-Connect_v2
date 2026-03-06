@@ -3,7 +3,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
+enum AppEnv { production, staging, emulator }
+
 class FirebaseEnv {
+  static const String appEnvRaw = String.fromEnvironment(
+    'APP_ENV',
+    defaultValue: 'production',
+  );
   static const bool useEmulators = bool.fromEnvironment(
     'USE_FIREBASE_EMULATORS',
     defaultValue: false,
@@ -13,8 +19,25 @@ class FirebaseEnv {
     defaultValue: '',
   );
 
+  static AppEnv get appEnv {
+    if (useEmulators) return AppEnv.emulator;
+    switch (appEnvRaw.toLowerCase()) {
+      case 'staging':
+        return AppEnv.staging;
+      case 'emulator':
+        return AppEnv.emulator;
+      case 'production':
+      default:
+        return AppEnv.production;
+    }
+  }
+
+  static bool get isProduction => appEnv == AppEnv.production;
+  static bool get isStaging => appEnv == AppEnv.staging;
+  static bool get isEmulator => appEnv == AppEnv.emulator;
+
   static Future<void> configure() async {
-    if (!useEmulators) return;
+    if (!isEmulator) return;
 
     final host = _emulatorHost();
 
@@ -24,7 +47,8 @@ class FirebaseEnv {
   }
 
   static String backendLabel() {
-    if (!useEmulators) return 'PROD';
+    if (isProduction) return '';
+    if (isStaging) return 'STAGING';
     return 'EMULATOR(${_emulatorHost()})';
   }
 

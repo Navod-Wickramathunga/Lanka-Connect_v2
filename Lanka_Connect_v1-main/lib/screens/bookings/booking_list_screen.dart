@@ -161,17 +161,18 @@ class BookingListScreen extends StatelessWidget {
     );
   }
 
-  Widget _infoRow(IconData icon, String text) {
+  Widget _infoRow(BuildContext context, IconData icon, String text) {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
         children: [
-          Icon(icon, size: 14, color: DesignTokens.textSubtle),
+          Icon(icon, size: 14, color: muted),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
               text,
-              style: TextStyle(fontSize: 13, color: DesignTokens.textSubtle),
+              style: TextStyle(fontSize: 13, color: muted),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -227,7 +228,10 @@ class BookingListScreen extends StatelessWidget {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: FirestoreRefs.users().doc(user.uid).snapshots(),
       builder: (context, snapshot) {
-        final role = UserRoles.normalize(snapshot.data?.data()?['role']);
+        final role = user.isAnonymous
+            ? UserRoles.guest
+            : UserRoles.normalize(snapshot.data?.data()?['role']);
+        final isSeekerLike = role == UserRoles.seeker || role == UserRoles.guest;
 
         Query<Map<String, dynamic>> query = FirestoreRefs.bookings();
         if (role == UserRoles.admin) {
@@ -369,7 +373,9 @@ class BookingListScreen extends StatelessWidget {
                                           category,
                                           style: TextStyle(
                                             fontSize: 12,
-                                            color: DesignTokens.textSubtle,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
                                           ),
                                         ),
                                     ],
@@ -380,9 +386,10 @@ class BookingListScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: 10),
                             if (location.trim().isNotEmpty)
-                              _infoRow(Icons.location_on, location),
+                              _infoRow(context, Icons.location_on, location),
                             if (amount != null)
                               _infoRow(
+                                context,
                                 Icons.payments,
                                 'LKR ${amount.toStringAsFixed(0)}',
                               ),
@@ -449,7 +456,7 @@ class BookingListScreen extends StatelessWidget {
                                       (data['providerId'] ?? '').toString(),
                                     ),
                                   ),
-                                if (role == UserRoles.seeker &&
+                                if (isSeekerLike &&
                                     status == 'accepted')
                                   _actionChip(
                                     context: context,
@@ -463,7 +470,7 @@ class BookingListScreen extends StatelessWidget {
                                       ),
                                     ),
                                   ),
-                                if ((role == UserRoles.seeker &&
+                                if ((isSeekerLike &&
                                         status == 'pending') ||
                                     (role == UserRoles.provider &&
                                         status == 'accepted'))
@@ -479,7 +486,7 @@ class BookingListScreen extends StatelessWidget {
                                       (data['providerId'] ?? '').toString(),
                                     ),
                                   ),
-                                if (role == UserRoles.seeker &&
+                                if (isSeekerLike &&
                                     status == 'completed' &&
                                     data['reviewed'] != true)
                                   _actionChip(
@@ -499,7 +506,7 @@ class BookingListScreen extends StatelessWidget {
                                       ),
                                     ),
                                   ),
-                                if (role == UserRoles.seeker &&
+                                if (isSeekerLike &&
                                     status == 'completed' &&
                                     data['reviewed'] == true)
                                   Container(

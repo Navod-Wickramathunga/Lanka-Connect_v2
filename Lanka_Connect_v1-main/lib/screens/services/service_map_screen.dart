@@ -46,6 +46,7 @@ class _ServiceMapScreenState extends State<ServiceMapScreen> {
   int _selectedIndex = 0;
   LatLng? _userLocation;
   bool _loadingLocation = true;
+  bool _mapReady = false;
   gm.GoogleMapController? _mapController;
 
   gm.LatLng _toGm(LatLng p) => gm.LatLng(p.latitude, p.longitude);
@@ -62,7 +63,12 @@ class _ServiceMapScreenState extends State<ServiceMapScreen> {
                 : gm.BitmapDescriptor.hueAzure,
           ),
           infoWindow: gm.InfoWindow(title: widget.items[i].title),
-          onTap: () => setState(() => _selectedIndex = i),
+          onTap: () {
+            setState(() => _selectedIndex = i);
+            _mapController?.animateCamera(
+              gm.CameraUpdate.newLatLngZoom(_toGm(widget.items[i].point), 14),
+            );
+          },
         ),
     };
   }
@@ -195,13 +201,33 @@ class _ServiceMapScreenState extends State<ServiceMapScreen> {
   }
 
   Widget _mapPanel(LatLng center) {
-    return gm.GoogleMap(
-      initialCameraPosition: gm.CameraPosition(target: _toGm(center), zoom: 11),
-      onMapCreated: (controller) => setState(() => _mapController = controller),
-      markers: _buildMarkers(),
-      myLocationEnabled: _userLocation != null,
-      myLocationButtonEnabled: false,
-      zoomControlsEnabled: true,
+    return Stack(
+      children: [
+        gm.GoogleMap(
+          initialCameraPosition: gm.CameraPosition(
+            target: _toGm(center),
+            zoom: 11,
+          ),
+          onMapCreated: (controller) {
+            setState(() {
+              _mapController = controller;
+              _mapReady = true;
+            });
+          },
+          markers: _buildMarkers(),
+          myLocationEnabled: _userLocation != null,
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: true,
+        ),
+        if (!_mapReady)
+          Positioned.fill(
+            child: Container(
+              color: Theme.of(context).colorScheme.surface,
+              alignment: Alignment.center,
+              child: const Text('Loading map...'),
+            ),
+          ),
+      ],
     );
   }
 
@@ -265,7 +291,7 @@ class _ServiceMapScreenState extends State<ServiceMapScreen> {
                     if (distanceStr.isNotEmpty) distanceStr,
                     if (item.isApproximate)
                       item.pointSource ?? 'Approximate location',
-                  ].join(' · '),
+                  ].join(' | '),
                 ),
                 isThreeLine: true,
                 trailing: FilledButton.icon(

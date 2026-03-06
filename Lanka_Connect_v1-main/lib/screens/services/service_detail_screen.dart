@@ -532,9 +532,9 @@ class ServiceDetailScreen extends StatelessWidget {
                 StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                   stream: FirestoreRefs.users().doc(user.uid).snapshots(),
                   builder: (context, roleSnapshot) {
-                    final role = UserRoles.normalize(
-                      roleSnapshot.data?.data()?['role'],
-                    );
+                    final role = user.isAnonymous
+                        ? UserRoles.guest
+                        : UserRoles.normalize(roleSnapshot.data?.data()?['role']);
                     final isOwner = providerId == user.uid;
 
                     // Provider who owns this service — can delete it
@@ -649,6 +649,25 @@ class ServiceDetailScreen extends StatelessWidget {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        if (role == UserRoles.guest)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              'Guest mode: Create an account to keep booking history and access chat later.',
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          ),
                         ElevatedButton(
                           onPressed: () => _createBooking(
                             context,

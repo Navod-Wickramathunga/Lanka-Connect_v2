@@ -45,13 +45,18 @@ cd ..
 firebase deploy --only firestore:rules,firestore:indexes,storage
 ```
 
-6. Run app:
+6. Run app (default production if no `APP_ENV` is passed):
 ```bash
 flutter run
 ```
 
-Preferred production-first scripts (same accounts/roles across app + web):
+Preferred environment scripts:
 ```bash
+# staging
+powershell -ExecutionPolicy Bypass -File scripts/run_app_staging.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run_web_staging.ps1
+
+# production
 powershell -ExecutionPolicy Bypass -File scripts/run_app_production.ps1
 powershell -ExecutionPolicy Bypass -File scripts/run_web_production.ps1
 ```
@@ -77,12 +82,43 @@ For web emulator testing with a non-localhost host override:
 powershell -ExecutionPolicy Bypass -File scripts/run_web_with_emulators.ps1 -EmulatorHost 192.168.x.x
 ```
 
+These emulator scripts now pass both:
+- `--dart-define=APP_ENV=emulator`
+- `--dart-define=USE_FIREBASE_EMULATORS=true`
+
 To use the same account on app and hosted web, sign in/create users in production mode only.
 
 Optional (Blaze/advanced): deploy Cloud Functions
 ```bash
 firebase deploy --only functions
 ```
+
+## Environment Model (`APP_ENV`)
+
+The app supports three runtime environments:
+- `APP_ENV=staging`
+- `APP_ENV=production`
+- `APP_ENV=emulator`
+
+Production UI hides environment labels; staging and emulator show backend labels to prevent mistakes.
+
+## Firebase Projects and Aliases
+
+`.firebaserc` aliases:
+- `staging`
+- `production`
+
+Before deploying, set real project IDs in `.firebaserc` and generate environment-specific FlutterFire files:
+
+```bash
+flutterfire configure --project=<staging-project-id> --platforms=android,ios,web --out=lib/firebase_options_staging.dart
+flutterfire configure --project=<production-project-id> --platforms=android,ios,web --out=lib/firebase_options_production.dart
+```
+
+## CI/CD Promotion Flow
+
+- Push to `develop`: auto deploy to **staging**
+- Push to `main` or tag `v*`: deploy to **production** via GitHub `production` environment approval gate
 
 For full setup details, see `FIREBASE_SETUP.md`.
 

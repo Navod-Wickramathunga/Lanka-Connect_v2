@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 
@@ -44,6 +45,7 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
   final _descriptionController = TextEditingController();
 
   bool _saving = false;
+  bool _fillingLocation = false;
   final List<XFile> _selectedImages = [];
   final List<String> _existingImageUrls = [];
   static const int _maxImages = 5;
@@ -250,6 +252,52 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
     }
   }
 
+  Future<void> _fillFromCurrentLocation() async {
+    setState(() => _fillingLocation = true);
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please enable location services.')),
+          );
+        }
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Location permission denied for current position.'),
+            ),
+          );
+        }
+        return;
+      }
+
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+      _latController.text = pos.latitude.toStringAsFixed(6);
+      _lngController.text = pos.longitude.toStringAsFixed(6);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location coordinates filled.')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _fillingLocation = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final effectiveLabel =
@@ -331,6 +379,27 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _saving || _fillingLocation
+                    ? null
+                    : _fillFromCurrentLocation,
+                icon: _fillingLocation
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.my_location),
+                label: Text(
+                  _fillingLocation
+                      ? 'Locating...'
+                      : 'Use current location',
+                ),
+              ),
             ),
             const SizedBox(height: 4),
             const Align(

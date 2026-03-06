@@ -1,10 +1,14 @@
 import {setGlobalOptions} from "firebase-functions/v2";
 import {onDocumentCreated, onDocumentUpdated} from "firebase-functions/v2/firestore";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError, onCall, onRequest} from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import {initializeApp} from "firebase-admin/app";
+import {getAuth} from "firebase-admin/auth";
 import {FieldValue, getFirestore} from "firebase-admin/firestore";
 import {getMessaging} from "firebase-admin/messaging";
+import {createHash} from "node:crypto";
+import twilio from "twilio";
+import sgMail from "@sendgrid/mail";
 
 initializeApp();
 const db = getFirestore();
@@ -359,3 +363,884 @@ export const sendPushOnNotificationCreate = onDocumentCreated(
     }
   }
 );
+
+type PaymentMethodType = "card" | "saved_card" | "bank_transfer";
+type PaymentStatus =
+  "initiated" |
+  "pending_gateway" |
+  "success" |
+  "failed" |
+  "pending_verification" |
+  "paid";
+
+/**
+ * Reads a required environment variable and throws when missing.
+ * @param {string} name Environment variable key.
+ * @return {string} Non-empty env value.
+ */
+function envStrict(name: string): string {
+  const value = process.env[name];
+  if (!value || !value.trim()) {
+    throw new HttpsError("failed-precondition", `Missing environment variable: ${name}`);
+  }
+  return value.trim();
+}
+
+/**
+ * Produces uppercase MD5 digest.
+ * @param {string} input Raw input text.
+ * @return {string} Uppercase MD5 hash.
+ */
+function md5(input: string): string {
+  return createHash("md5").update(input).digest("hex").toUpperCase();
+}
+
+/**
+ * Normalizes local phone values into E.164-like format.
+ * @param {string} value Phone input.
+ * @return {string} Normalized phone value.
+ */
+function normalizePhone(value: string): string {
+  const raw = value.replace(/[^0-9+]/g, "");
+  if (raw.startsWith("+")) return raw;
+  if (raw.startsWith("0")) return `+94${raw.slice(1)}`;
+  return `+94${raw}`;
+}
+
+/**
+ * Checks if the user profile role is admin.
+ * @param {string} uid User ID.
+ * @return {Promise<boolean>} Whether user is admin.
+ */
+async function isAdminUid(uid: string): Promise<boolean> {
+  const snap = await db.collection("users").doc(uid).get();
+  return (snap.data()?.role ?? "").toString().toLowerCase() === "admin";
+}
+
+/**
+ * Writes a single SMS/email receipt delivery log row.
+ * @param {Object} input Receipt log payload.
+ * @return {Promise<void>} Resolves when persisted.
+ */
+async function writeReceiptLog(input: {
+  paymentId: string;
+  bookingId: string;
+  userId: string;
+  channel: "sms" | "email";
+  destinationMasked: string;
+  status: "sent" | "failed";
+  providerMessageId?: string;
+  errorCode?: string;
+}): Promise<void> {
+  await db.collection("paymentReceipts").add({
+    paymentId: input.paymentId,
+    bookingId: input.bookingId,
+    userId: input.userId,
+    channel: input.channel,
+    destinationMasked: input.destinationMasked,
+    status: input.status,
+    providerMessageId: input.providerMessageId ?? null,
+    errorCode: input.errorCode ?? null,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+}
+
+/**
+ * Masks email destination in logs.
+ * @param {string} email Raw email.
+ * @return {string} Masked email.
+ */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return "***";
+  if (local.length <= 2) return `${local[0]}***@${domain}`;
+  return `${local.slice(0, 2)}***@${domain}`;
+}
+
+/**
+ * Masks phone destination in logs.
+ * @param {string} phone Raw phone.
+ * @return {string} Masked phone.
+ */
+function maskPhone(phone: string): string {
+  if (phone.length <= 4) return "***";
+  return `***${phone.slice(-4)}`;
+}
+
+const PASSWORD_RESET_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const PASSWORD_RESET_RATE_LIMIT_MAX_PER_EMAIL = 3;
+const PASSWORD_RESET_RATE_LIMIT_MAX_PER_IP = 20;
+
+/**
+ * Masks source IP address in logs.
+ * @param {string} ip Raw IP value.
+ * @return {string} Masked IP.
+ */
+function maskIp(ip: string): string {
+  if (!ip) return "***";
+  if (ip.includes(":")) {
+    const parts = ip.split(":").filter(Boolean);
+    if (parts.length <= 2) return "***";
+    return `${parts.slice(0, 2).join(":")}:***`;
+  }
+  const parts = ip.split(".");
+  if (parts.length !== 4) return "***";
+  return `${parts[0]}.${parts[1]}.*.*`;
+}
+
+/**
+ * Normalizes user email for auth lookup and anti-abuse keys.
+ * @param {string} email Raw email input.
+ * @return {string} Lower-cased and trimmed email.
+ */
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/**
+ * Extracts request caller IP.
+ * @param {Object} request Callable request object.
+ * @return {string} Caller IP or fallback marker.
+ */
+function callerIp(request: {
+  rawRequest?: {
+    headers?: Record<string, string | string[] | undefined>;
+    ip?: string;
+  };
+}): string {
+  const forwarded = request.rawRequest?.headers?.["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim().length > 0) {
+    return forwarded.split(",")[0].trim();
+  }
+  if (Array.isArray(forwarded) && forwarded.length > 0) {
+    return forwarded[0].split(",")[0].trim();
+  }
+  return (request.rawRequest?.ip ?? "").toString().trim() || "unknown";
+}
+
+/**
+ * Applies windowed rate limit for reset-email requests.
+ * @param {string} key Unique key (email or ip hash).
+ * @param {number} maxAttempts Allowed max attempts per window.
+ * @param {number} nowMs Epoch milliseconds.
+ * @return {Promise<boolean>} Whether current request should be blocked.
+ */
+async function isRateLimited(
+  key: string,
+  maxAttempts: number,
+  nowMs: number,
+): Promise<boolean> {
+  const docRef = db.collection("passwordResetRateLimits").doc(key);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(docRef);
+    const data = snap.data() ?? {};
+    const windowStartMs = Number(data.windowStartMs ?? 0);
+    const attempts = Number(data.attempts ?? 0);
+    const inWindow = windowStartMs > 0 &&
+      (nowMs - windowStartMs) < PASSWORD_RESET_RATE_LIMIT_WINDOW_MS;
+    const nextWindowStartMs = inWindow ? windowStartMs : nowMs;
+    const nextAttempts = inWindow ? attempts + 1 : 1;
+    const blocked = inWindow && attempts >= maxAttempts;
+
+    tx.set(docRef, {
+      windowStartMs: nextWindowStartMs,
+      attempts: blocked ? attempts : nextAttempts,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, {merge: true});
+    return blocked;
+  });
+}
+
+/**
+ * Resolves current app origin for first-party reset links.
+ * @return {string} Base URL without trailing slash.
+ */
+function resetBaseUrl(): string {
+  const configured = process.env.PASSWORD_RESET_BASE_URL;
+  if (configured && configured.trim()) {
+    return configured.trim().replace(/\/+$/, "");
+  }
+  const projectId = process.env.GCLOUD_PROJECT ?? "";
+  if (projectId.trim()) {
+    return `https://${projectId.trim()}.firebaseapp.com`;
+  }
+  return "https://lankaconnect-app.firebaseapp.com";
+}
+
+/**
+ * Renders the password reset email HTML.
+ * @param {Object} input Render input.
+ * @return {string} HTML body.
+ */
+function renderPasswordResetHtml(input: {
+  resetUrl: string;
+  displayEmail: string;
+}): string {
+  const escapedUrl = input.resetUrl.replace(/"/g, "&quot;");
+  const escapedEmail = input.displayEmail.replace(/[<>]/g, "");
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reset your Lanka Connect password</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f3f7f9;font-family:Arial,sans-serif;color:#102235;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0"
+            cellpadding="0" style="max-width:620px;background:#ffffff;
+            border:1px solid #d8e3ea;border-radius:18px;overflow:hidden;">
+            <tr>
+              <td style="padding:28px 28px 18px;background:linear-gradient(135deg,#0b5d57,#143b58);color:#f4fbfa;">
+                <p style="margin:0 0 8px 0;font-size:12px;
+                  letter-spacing:.4px;text-transform:uppercase;
+                  color:#ffd58a;">Lanka Connect</p>
+                <h1 style="margin:0;font-size:28px;line-height:1.2;font-weight:700;">Reset your password</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:26px 28px;">
+                <p style="margin:0 0 14px 0;font-size:16px;line-height:1.45;">
+                  We received a request to reset the password for <strong>${escapedEmail}</strong>.
+                </p>
+                <p style="margin:0 0 22px 0;font-size:15px;line-height:1.45;color:#5d7285;">
+                  If this was you, use the button below. If not, you can safely ignore this email.
+                </p>
+                <p style="margin:0 0 24px 0;">
+                  <a href="${escapedUrl}" style="display:inline-block;
+                    padding:12px 22px;background:#0f766e;color:#ffffff;
+                    text-decoration:none;border-radius:10px;
+                    font-weight:700;">Reset Password</a>
+                </p>
+                <p style="margin:0 0 8px 0;font-size:13px;
+                  line-height:1.45;color:#5d7285;">Link not working?
+                  Copy and paste this URL into your browser:</p>
+                <p style="margin:0 0 18px 0;font-size:12px;line-height:1.55;word-break:break-all;">
+                  <a href="${escapedUrl}" style="color:#0f5c54;">${escapedUrl}</a>
+                </p>
+                <p style="margin:0;font-size:12px;line-height:1.5;
+                  color:#7a4b00;background:#fff7e7;
+                  border:1px solid #f3ddaa;padding:10px 12px;
+                  border-radius:10px;">
+                  For security, this link expires soon and can be used once.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+/**
+ * Renders plain text for password reset email.
+ * @param {Object} input Render input.
+ * @return {string} Plain text body.
+ */
+function renderPasswordResetText(input: {resetUrl: string}): string {
+  return [
+    "Lanka Connect password reset",
+    "",
+    "A request was received to reset your password.",
+    `Reset password: ${input.resetUrl}`,
+    "",
+    "If you did not request this, you can ignore this email.",
+    "This link expires soon and can be used once.",
+  ].join("\n");
+}
+
+/** Requests a password reset email without leaking account existence. */
+export const requestPasswordResetEmail = onCall(async (request) => {
+  const rawEmail = (request.data?.email ?? "").toString();
+  const email = normalizeEmail(rawEmail);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new HttpsError("invalid-argument", "A valid email is required.");
+  }
+
+  const ip = callerIp(request);
+  const nowMs = Date.now();
+  const emailKey = `email_${md5(email)}`;
+  const ipKey = `ip_${md5(ip)}`;
+
+  const [blockedByEmail, blockedByIp] = await Promise.all([
+    isRateLimited(emailKey, PASSWORD_RESET_RATE_LIMIT_MAX_PER_EMAIL, nowMs),
+    isRateLimited(ipKey, PASSWORD_RESET_RATE_LIMIT_MAX_PER_IP, nowMs),
+  ]);
+  if (blockedByEmail || blockedByIp) {
+    logger.warn("Password reset request throttled", {
+      emailMasked: maskEmail(email),
+      ipMasked: maskIp(ip),
+      blockedByEmail,
+      blockedByIp,
+    });
+    return {ok: true};
+  }
+
+  try {
+    const resetLink = await getAuth().generatePasswordResetLink(email);
+    const resetLinkUrl = new URL(resetLink);
+    const oobCode = resetLinkUrl.searchParams.get("oobCode");
+    if (!oobCode) {
+      logger.error("Missing oobCode in generated reset link", {
+        emailMasked: maskEmail(email),
+      });
+      return {ok: true};
+    }
+
+    const resetUrl =
+      `${resetBaseUrl()}/reset-password?oobCode=${encodeURIComponent(oobCode)}`;
+    sgMail.setApiKey(envStrict("SENDGRID_API_KEY"));
+    await sgMail.send({
+      to: email,
+      from: envStrict("SENDGRID_FROM_EMAIL"),
+      subject: "Reset your Lanka Connect password",
+      text: renderPasswordResetText({resetUrl}),
+      html: renderPasswordResetHtml({
+        resetUrl,
+        displayEmail: maskEmail(email),
+      }),
+    });
+    logger.info("Password reset email sent", {
+      emailMasked: maskEmail(email),
+      ipMasked: maskIp(ip),
+    });
+  } catch (error) {
+    const code = (error as {code?: string})?.code ?? "";
+    if (code === "auth/user-not-found") {
+      logger.info("Password reset requested for unknown account", {
+        emailMasked: maskEmail(email),
+        ipMasked: maskIp(ip),
+      });
+      return {ok: true};
+    }
+    logger.error("Password reset request failed", {
+      emailMasked: maskEmail(email),
+      ipMasked: maskIp(ip),
+      error,
+    });
+    throw new HttpsError("internal", "Could not process reset request.");
+  }
+
+  return {ok: true};
+});
+
+/**
+ * Sends payment receipt through SMS and email providers.
+ * @param {Object} input Receipt dispatch payload.
+ * @return {Promise<Object>} Dispatch status for both channels.
+ */
+async function sendPaymentReceipt(input: {
+  paymentId: string;
+  bookingId: string;
+  userId: string;
+  amount: number;
+  status: "success" | "paid";
+  transactionId: string;
+}): Promise<{
+  smsSent: boolean;
+  emailSent: boolean;
+  smsMessageId?: string;
+  emailMessageId?: string;
+}> {
+  const userSnap = await db.collection("users").doc(input.userId).get();
+  const profile = userSnap.data() ?? {};
+  const authUser = await getAuth().getUser(input.userId).catch(() => null);
+  const email = (profile.email ?? authUser?.email ?? "").toString().trim();
+  const phone = normalizePhone((profile.contact ?? "").toString().trim());
+  const paidAt = new Date().toISOString();
+  const shortBooking = input.bookingId.length > 6 ?
+    input.bookingId.substring(0, 6) :
+    input.bookingId;
+
+  let smsSent = false;
+  let emailSent = false;
+  let smsMessageId: string | undefined;
+  let emailMessageId: string | undefined;
+
+  if (phone.length >= 10) {
+    try {
+      const twilioClient = twilio(
+        envStrict("TWILIO_ACCOUNT_SID"),
+        envStrict("TWILIO_AUTH_TOKEN"),
+      );
+      const sms = await twilioClient.messages.create({
+        from: envStrict("TWILIO_FROM_NUMBER"),
+        to: phone,
+        body:
+          `Lanka Connect receipt: booking ${shortBooking}, ` +
+          `LKR ${input.amount.toFixed(2)}, status ${input.status}, ` +
+          `tx ${input.transactionId}, ${paidAt}.`,
+      });
+      smsSent = true;
+      smsMessageId = sms.sid;
+      await writeReceiptLog({
+        paymentId: input.paymentId,
+        bookingId: input.bookingId,
+        userId: input.userId,
+        channel: "sms",
+        destinationMasked: maskPhone(phone),
+        status: "sent",
+        providerMessageId: sms.sid,
+      });
+    } catch (error) {
+      logger.error("SMS receipt failed", {paymentId: input.paymentId, error});
+      await writeReceiptLog({
+        paymentId: input.paymentId,
+        bookingId: input.bookingId,
+        userId: input.userId,
+        channel: "sms",
+        destinationMasked: maskPhone(phone),
+        status: "failed",
+        errorCode: "sms_send_failed",
+      });
+    }
+  }
+
+  if (email.length > 0) {
+    try {
+      sgMail.setApiKey(envStrict("SENDGRID_API_KEY"));
+      const [mailResponse] = await sgMail.send({
+        to: email,
+        from: envStrict("SENDGRID_FROM_EMAIL"),
+        subject: "Lanka Connect Payment Receipt",
+        text: [
+          "Payment completed successfully.",
+          `Booking ID: ${input.bookingId}`,
+          `Amount: LKR ${input.amount.toFixed(2)}`,
+          `Status: ${input.status}`,
+          `Transaction ID: ${input.transactionId}`,
+          `Paid At: ${paidAt}`,
+        ].join("\n"),
+      });
+      emailSent = true;
+      emailMessageId =
+        (mailResponse.headers["x-message-id"] ?? "").toString() || undefined;
+      await writeReceiptLog({
+        paymentId: input.paymentId,
+        bookingId: input.bookingId,
+        userId: input.userId,
+        channel: "email",
+        destinationMasked: maskEmail(email),
+        status: "sent",
+        providerMessageId: emailMessageId,
+      });
+    } catch (error) {
+      logger.error("Email receipt failed", {paymentId: input.paymentId, error});
+      await writeReceiptLog({
+        paymentId: input.paymentId,
+        bookingId: input.bookingId,
+        userId: input.userId,
+        channel: "email",
+        destinationMasked: maskEmail(email),
+        status: "failed",
+        errorCode: "email_send_failed",
+      });
+    }
+  }
+
+  return {smsSent, emailSent, smsMessageId, emailMessageId};
+}
+
+/**
+ * Loads and validates booking ownership/payment context for the caller.
+ * @param {string} bookingId Booking identifier.
+ * @param {string} uid Current user ID.
+ * @return {Promise<Object>} Booking reference and payment fields.
+ */
+async function bookingPaymentContext(bookingId: string, uid: string): Promise<{
+  bookingRef: FirebaseFirestore.DocumentReference<FirebaseFirestore.DocumentData>;
+  paymentFields: {
+    bookingId: string;
+    serviceId: string;
+    providerId: string;
+    seekerId: string;
+    amount: number;
+    grossAmount: number;
+    discountAmount: number;
+    netAmount: number;
+    currency: string;
+  };
+}> {
+  const bookingRef = db.collection("bookings").doc(bookingId);
+  const bookingSnap = await bookingRef.get();
+  if (!bookingSnap.exists) {
+    throw new HttpsError("not-found", "Booking not found.");
+  }
+  const booking = bookingSnap.data() ?? {};
+  const seekerId = (booking.seekerId ?? "").toString();
+  if (seekerId !== uid) {
+    throw new HttpsError("permission-denied", "Only booking seeker can pay.");
+  }
+  const status = (booking.status ?? "").toString();
+  if (status !== "accepted") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Booking must be accepted before payment.",
+    );
+  }
+  const amount = Number(booking.netAmount ?? booking.amount ?? 0);
+  return {
+    bookingRef,
+    paymentFields: {
+      bookingId,
+      serviceId: (booking.serviceId ?? "").toString(),
+      providerId: (booking.providerId ?? "").toString(),
+      seekerId,
+      amount,
+      grossAmount: Number(booking.grossAmount ?? booking.amount ?? amount),
+      discountAmount: Number(booking.discountAmount ?? 0),
+      netAmount: amount,
+      currency: "LKR",
+    },
+  };
+}
+
+/** Creates a PayHere checkout attempt and returns redirect URL. */
+export const createPayHereCheckoutSession = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Sign in required.");
+  }
+
+  const data = request.data as {
+    bookingId?: string;
+    paymentMethodId?: string;
+    saveCard?: boolean;
+    payerEmail?: string;
+    payerPhone?: string;
+    methodType?: PaymentMethodType;
+  };
+  const bookingId = (data.bookingId ?? "").toString().trim();
+  if (!bookingId) {
+    throw new HttpsError("invalid-argument", "bookingId is required.");
+  }
+  const {paymentFields} = await bookingPaymentContext(bookingId, uid);
+  const paymentRef = db.collection("payments").doc();
+  const paymentMethodId = (data.paymentMethodId ?? "").toString().trim();
+  const methodType: PaymentMethodType = paymentMethodId ?
+    "saved_card" :
+    (data.methodType ?? "card");
+  const attemptId = paymentRef.id;
+
+  await paymentRef.set({
+    ...paymentFields,
+    payerId: uid,
+    methodType,
+    status: "pending_gateway" as PaymentStatus,
+    gateway: "payhere",
+    gatewayRefs: {
+      attemptId,
+      tokenId: paymentMethodId || null,
+    },
+    saveCard: data.saveCard === true,
+    payerEmail: (data.payerEmail ?? "").toString().trim(),
+    payerPhone: normalizePhone((data.payerPhone ?? "").toString().trim()),
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  const merchantId = envStrict("PAYHERE_MERCHANT_ID");
+  const amountText = paymentFields.netAmount.toFixed(2);
+  const currency = "LKR";
+  const secretHash = md5(envStrict("PAYHERE_MERCHANT_SECRET"));
+  const hash = md5(`${merchantId}${attemptId}${amountText}${currency}${secretHash}`);
+  const baseUrl = envStrict("PAYHERE_CHECKOUT_BASE_URL");
+  const checkoutUrl =
+    `${baseUrl}?merchant_id=${encodeURIComponent(merchantId)}` +
+    `&order_id=${encodeURIComponent(attemptId)}` +
+    `&amount=${encodeURIComponent(amountText)}` +
+    `&currency=${currency}&hash=${hash}`;
+
+  return {
+    checkoutUrl,
+    paymentAttemptId: attemptId,
+    expiresAt: Date.now() + (15 * 60 * 1000),
+  };
+});
+
+/** Creates a bank-transfer payment attempt pending admin verification. */
+export const submitBankTransfer = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Sign in required.");
+  }
+  const data = request.data as {
+    bookingId?: string;
+    bankAccountId?: string;
+    transferReference?: string;
+    paidAmount?: number;
+    paidAt?: {seconds?: number; nanoseconds?: number};
+  };
+  const bookingId = (data.bookingId ?? "").toString().trim();
+  const bankAccountId = (data.bankAccountId ?? "").toString().trim();
+  const transferReference = (data.transferReference ?? "").toString().trim();
+  if (!bookingId || !bankAccountId || !transferReference) {
+    throw new HttpsError(
+      "invalid-argument",
+      "bookingId, bankAccountId and transferReference are required.",
+    );
+  }
+  if (!/^[A-Za-z0-9\-_/]{6,}$/.test(transferReference)) {
+    throw new HttpsError("invalid-argument", "Invalid transfer reference format.");
+  }
+
+  const {paymentFields} = await bookingPaymentContext(bookingId, uid);
+  const paidAmount = Number(data.paidAmount ?? 0);
+  if (
+    !Number.isFinite(paidAmount) ||
+    Math.abs(paidAmount - paymentFields.netAmount) > 0.009
+  ) {
+    throw new HttpsError("invalid-argument", "Paid amount must match payable amount.");
+  }
+
+  const bankSnap = await db.collection("providerBankAccounts")
+    .doc(bankAccountId)
+    .get();
+  if (!bankSnap.exists) {
+    throw new HttpsError("not-found", "Provider bank account not found.");
+  }
+  const bank = bankSnap.data() ?? {};
+  if (
+    (bank.providerId ?? "").toString() !== paymentFields.providerId ||
+    bank.isActive !== true
+  ) {
+    throw new HttpsError("failed-precondition", "Invalid provider bank account.");
+  }
+
+  const paymentRef = db.collection("payments").doc();
+  await paymentRef.set({
+    ...paymentFields,
+    payerId: uid,
+    methodType: "bank_transfer" as PaymentMethodType,
+    status: "pending_verification" as PaymentStatus,
+    gateway: "bank_transfer",
+    bankTransfer: {
+      bankAccountId,
+      transferReference,
+      paidAmount,
+      paidAt: data.paidAt ?
+        new Date((data.paidAt.seconds ?? 0) * 1000) :
+        FieldValue.serverTimestamp(),
+    },
+    gatewayRefs: {
+      attemptId: paymentRef.id,
+      transactionId: transferReference,
+    },
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return {
+    paymentAttemptId: paymentRef.id,
+    status: "pending_verification",
+  };
+});
+
+/** Admin-only approval/rejection of pending bank-transfer attempts. */
+export const verifyBankTransfer = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Sign in required.");
+  }
+  if (!(await isAdminUid(uid))) {
+    throw new HttpsError(
+      "permission-denied",
+      "Only admin can verify bank transfer.",
+    );
+  }
+  const data = request.data as {
+    paymentAttemptId?: string;
+    approved?: boolean;
+    note?: string;
+  };
+  const paymentAttemptId = (data.paymentAttemptId ?? "").toString().trim();
+  if (!paymentAttemptId) {
+    throw new HttpsError("invalid-argument", "paymentAttemptId is required.");
+  }
+  const approved = data.approved === true;
+  const paymentRef = db.collection("payments").doc(paymentAttemptId);
+  const paymentSnap = await paymentRef.get();
+  if (!paymentSnap.exists) {
+    throw new HttpsError("not-found", "Payment attempt not found.");
+  }
+  const payment = paymentSnap.data() ?? {};
+  if ((payment.gateway ?? "").toString() !== "bank_transfer") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Payment is not a bank transfer.",
+    );
+  }
+  if ((payment.status ?? "").toString() !== "pending_verification") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Payment is not pending verification.",
+    );
+  }
+
+  const nextStatus: PaymentStatus = approved ? "paid" : "failed";
+  await paymentRef.update({
+    status: nextStatus,
+    verification: {
+      verifiedBy: uid,
+      note: (data.note ?? "").toString(),
+      verifiedAt: FieldValue.serverTimestamp(),
+    },
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  if (approved) {
+    const bookingId = (payment.bookingId ?? "").toString();
+    await db.collection("bookings").doc(bookingId).set({
+      paymentStatus: "paid",
+      paidAt: FieldValue.serverTimestamp(),
+      grossAmount: Number(payment.grossAmount ?? payment.amount ?? 0),
+      discountAmount: Number(payment.discountAmount ?? 0),
+      netAmount: Number(payment.netAmount ?? payment.amount ?? 0),
+    }, {merge: true});
+
+    const receipt = await sendPaymentReceipt({
+      paymentId: paymentAttemptId,
+      bookingId,
+      userId: (payment.seekerId ?? "").toString(),
+      amount: Number(payment.netAmount ?? payment.amount ?? 0),
+      status: "paid",
+      transactionId:
+        (payment.gatewayRefs?.transactionId ?? paymentAttemptId).toString(),
+    });
+    await paymentRef.update({
+      receipt: {
+        smsSent: receipt.smsSent,
+        emailSent: receipt.emailSent,
+        smsMessageId: receipt.smsMessageId ?? null,
+        emailMessageId: receipt.emailMessageId ?? null,
+        sentAt: FieldValue.serverTimestamp(),
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+
+  return {status: nextStatus};
+});
+
+/** Handles PayHere gateway callbacks, verifies signature, and finalizes payments. */
+export const payHereWebhook = onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).send("Method Not Allowed");
+    return;
+  }
+
+  try {
+    const merchantId = envStrict("PAYHERE_MERCHANT_ID");
+    const secretHash = md5(envStrict("PAYHERE_MERCHANT_SECRET"));
+    const payload = req.body as Record<string, unknown>;
+    const orderId = (payload.order_id ?? "").toString();
+    const paymentId = orderId.trim();
+    const statusCode = (payload.status_code ?? "").toString();
+    const amount = Number(payload.payhere_amount ?? 0).toFixed(2);
+    const currency = (payload.payhere_currency ?? "LKR").toString();
+    const receivedSig = (payload.md5sig ?? "").toString().toUpperCase();
+    const expectedSig = md5(
+      `${merchantId}${orderId}${amount}${currency}${statusCode}${secretHash}`,
+    );
+
+    if (!paymentId) {
+      res.status(400).send("missing order_id");
+      return;
+    }
+    if (!receivedSig || receivedSig !== expectedSig) {
+      logger.warn("Webhook signature mismatch", {paymentId});
+      res.status(401).send("invalid signature");
+      return;
+    }
+
+    const paymentRef = db.collection("payments").doc(paymentId);
+    const paymentSnap = await paymentRef.get();
+    if (!paymentSnap.exists) {
+      res.status(404).send("payment not found");
+      return;
+    }
+    const payment = paymentSnap.data() ?? {};
+    const isSuccess = statusCode === "2";
+    const newStatus: PaymentStatus = isSuccess ? "success" : "failed";
+    const transactionId =
+      (payload.payment_id ?? payload.custom_1 ?? paymentId).toString();
+
+    await paymentRef.update({
+      status: newStatus,
+      gatewayRefs: {
+        attemptId: paymentId,
+        transactionId,
+        tokenId:
+          (payload.card_token ?? payload.token_id ?? payment.gatewayRefs?.tokenId ?? null),
+        cardLast4: (payload.card_no ?? "").toString().slice(-4),
+        cardBrand: (payload.card_type ?? "").toString(),
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    if (isSuccess) {
+      const bookingId = (payment.bookingId ?? "").toString();
+      await db.collection("bookings").doc(bookingId).set({
+        paymentStatus: "paid",
+        paidAt: FieldValue.serverTimestamp(),
+        grossAmount: Number(payment.grossAmount ?? payment.amount ?? 0),
+        discountAmount: Number(payment.discountAmount ?? 0),
+        netAmount: Number(payment.netAmount ?? payment.amount ?? 0),
+      }, {merge: true});
+
+      const saveCard = payment.saveCard === true;
+      const tokenId = (payload.card_token ??
+        payload.token_id ??
+        payment.gatewayRefs?.tokenId ??
+        "").toString().trim();
+      if (saveCard && tokenId) {
+        await db.collection("users")
+          .doc((payment.seekerId ?? "").toString())
+          .collection("savedPaymentMethods")
+          .add({
+            userId: (payment.seekerId ?? "").toString(),
+            gateway: "payhere",
+            tokenRef: tokenId,
+            brand: (payload.card_type ?? "CARD").toString(),
+            last4: (payload.card_no ?? "").toString().slice(-4),
+            expiryMonth: Number(payload.expiry_month ?? 0) || null,
+            expiryYear: Number(payload.expiry_year ?? 0) || null,
+            isDefault: true,
+            status: "active",
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+      }
+
+      const receipt = await sendPaymentReceipt({
+        paymentId,
+        bookingId,
+        userId: (payment.seekerId ?? "").toString(),
+        amount: Number(payment.netAmount ?? payment.amount ?? 0),
+        status: "success",
+        transactionId,
+      });
+      await paymentRef.update({
+        receipt: {
+          smsSent: receipt.smsSent,
+          emailSent: receipt.emailSent,
+          smsMessageId: receipt.smsMessageId ?? null,
+          emailMessageId: receipt.emailMessageId ?? null,
+          sentAt: FieldValue.serverTimestamp(),
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    res.status(200).send("ok");
+  } catch (error) {
+    logger.error("payHereWebhook failed", {error});
+    res.status(500).send("internal error");
+  }
+});

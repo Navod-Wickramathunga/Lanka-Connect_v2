@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.example.lanka_connect",
+      "sha256_cert_fingerprints": [
+        "6F:84:1C:3D:A8:5A:8A:68:08:24:6B:88:B0:B9:05:AB:47:5C:55:3F:3A:36:76:F8:1D:59:A9:5C:FA:7A:74:65"
+      ]
+    }
+  }
+]

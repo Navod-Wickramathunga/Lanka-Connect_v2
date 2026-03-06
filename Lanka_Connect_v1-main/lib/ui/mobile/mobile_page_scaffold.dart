@@ -11,6 +11,8 @@ class MobilePageScaffold extends StatelessWidget {
     required this.body,
     this.actions = const [],
     this.useScaffold = false,
+    this.showBackButton,
+    this.onBackPressed,
   });
 
   final String title;
@@ -19,9 +21,12 @@ class MobilePageScaffold extends StatelessWidget {
   final Widget body;
   final List<Widget> actions;
   final bool useScaffold;
+  final bool? showBackButton;
+  final VoidCallback? onBackPressed;
 
   @override
   Widget build(BuildContext context) {
+    final shouldShowBack = showBackButton ?? Navigator.of(context).canPop();
     final content = SafeArea(
       child: Column(
         children: [
@@ -31,6 +36,8 @@ class MobilePageScaffold extends StatelessWidget {
               title: title,
               subtitle: subtitle,
               accentColor: accentColor,
+              showBackButton: shouldShowBack,
+              onBackPressed: onBackPressed,
               trailing: actions.isEmpty
                   ? null
                   : Row(mainAxisSize: MainAxisSize.min, children: actions),
@@ -52,6 +59,9 @@ class MobilePageScaffold extends StatelessWidget {
     );
 
     if (!useScaffold) return content;
-    return Scaffold(backgroundColor: MobileTokens.background, body: content);
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      body: content,
+    );
   }
 }

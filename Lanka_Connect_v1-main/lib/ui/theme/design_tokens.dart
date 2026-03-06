@@ -33,6 +33,48 @@ class DesignTokens {
     Color(0xFF0F172A),
   ];
 
+  // Web auth revamp tokens (warm trust direction)
+  static const List<Color> authWebBackgroundGradient = [
+    Color(0xFFF7F4EE),
+    Color(0xFFE8EEF6),
+  ];
+  static const List<Color> authWebHeroGradient = [
+    Color(0xFF0B5D57),
+    Color(0xFF143B58),
+  ];
+  static const Color authWebHeroGlow = Color(0x3329B7A7);
+  static const Color authWebHeroText = Color(0xFFF4FBFA);
+  static const Color authWebHeroTextMuted = Color(0xFFD5ECE8);
+  static const Color authWebHeroAccent = Color(0xFFFFD58A);
+  static const Color authWebPanelSurface = Color(0xFFFAFCFF);
+  static const Color authWebPanelBorder = Color(0xFFDDE5F0);
+  static const Color authWebPanelShadow = Color(0x1A0F2238);
+  static const Color authWebPanelMuted = Color(0xFF5D7285);
+  static const Color authWebPanelTitle = Color(0xFF102235);
+  static const Color authWebPrimaryAction = Color(0xFF0F766E);
+  static const Color authWebPrimaryActionHover = Color(0xFF0C615A);
+  static const Color authWebPrimaryActionPressed = Color(0xFF0A4F4A);
+  static const Color authWebAccentWarm = Color(0xFFF59E0B);
+  static const Color authWebWarmSurface = Color(0xFFFFF7E7);
+  static const Color authWebWarmText = Color(0xFF7A4B00);
+  static const Color authWebChipBorder = Color(0xFFD2DEEA);
+  static const Color authWebChipFill = Color(0xFFFFFFFF);
+  static const Color authWebChipHover = Color(0xFFF2F7FB);
+  static const Color authWebChipSelectedBorder = Color(0xFF138076);
+  static const Color authWebChipSelectedFill = Color(0xFFE7F8F5);
+  static const Color authWebChipLabel = Color(0xFF1E3245);
+  static const Color authWebChipSelectedLabel = Color(0xFF0F5C54);
+  static const Color authWebSecondaryActionSurface = Color(0xFFE7EFF7);
+  static const Color authWebSecondaryActionHover = Color(0xFFDCE7F1);
+  static const Color authWebSecondaryActionText = Color(0xFF18354D);
+  static const Color authWebErrorSurface = Color(0xFFFFF1F2);
+  static const Color authWebErrorBorder = Color(0xFFF5C2C7);
+  static const Color authWebSuccessText = Color(0xFF047857);
+  static const double authWebHeroRadius = 32;
+  static const double authWebPanelRadius = 30;
+  static const double authWebDialogRadius = 24;
+  static const double authWebPanelShadowBlur = 30;
+
   static const List<Color> mobileHeaderGradient = [
     Color(0xFF0D9488),
     Color(0xFF0F766E),

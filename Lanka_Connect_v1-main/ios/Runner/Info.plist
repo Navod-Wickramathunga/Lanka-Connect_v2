@@ -45,6 +45,8 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>FlutterDeepLinkingEnabled</key>
+	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>We use your location to find nearby service providers.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

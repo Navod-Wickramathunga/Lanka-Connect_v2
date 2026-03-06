@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import '../../models/service_discovery_filter.dart';
 import '../../ui/theme/design_tokens.dart';
 import '../../utils/display_name_utils.dart';
 import '../../utils/firestore_refs.dart';
@@ -120,40 +121,57 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
           ),
 
           // Search bar
+          if (user?.isAnonymous == true)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'You are browsing as guest. Create an account from the top-right icon to keep your bookings and chat history.',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Search bar with suggestions
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: TextField(
+              child: _SeekerSearchBar(
                 controller: _searchController,
+                searchQuery: _searchQuery,
                 onChanged: (value) => setState(() => _searchQuery = value),
-                decoration: InputDecoration(
-                  hintText: 'Search services...',
-                  prefixIcon: const Icon(
-                    Icons.search,
-                    color: DesignTokens.textSubtle,
-                  ),
-                  suffixIcon: _searchQuery.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() => _searchQuery = '');
-                          },
-                        )
-                      : null,
-                  filled: true,
-                  fillColor: isDark
-                      ? Colors.grey[850]
-                      : DesignTokens.surfaceElevated,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(DesignTokens.radiusMd),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                ),
+                onClear: () {
+                  _searchController.clear();
+                  setState(() => _searchQuery = '');
+                },
+                onSuggestionTap: (suggestion) {
+                  _searchController.clear();
+                  setState(() => _searchQuery = '');
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ServiceListScreen(
+                        initialFilter: ServiceDiscoveryFilter(
+                          category: suggestion.isCategory
+                              ? suggestion.label
+                              : null,
+                          query: suggestion.isCategory
+                              ? null
+                              : suggestion.label,
+                          autoApply: true,
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ),
@@ -189,7 +207,20 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
               padding: const EdgeInsets.only(bottom: 16),
               child: CategoryBar(
                 selected: _selectedCategory,
-                onSelected: (cat) => setState(() => _selectedCategory = cat),
+                onSelected: (cat) {
+                  setState(() => _selectedCategory = cat);
+                  if (cat.trim().isEmpty) return;
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ServiceListScreen(
+                        initialFilter: ServiceDiscoveryFilter(
+                          category: cat,
+                          autoApply: true,
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ),
@@ -202,14 +233,21 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                 onViewAll: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => const ServiceListScreen(),
+                      builder: (_) => const ServiceListScreen(
+                        initialFilter: ServiceDiscoveryFilter(autoApply: true),
+                      ),
                     ),
                   );
                 },
-                onPromoTap: (index) {
+                onPromoTap: (category) {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => const ServiceListScreen(),
+                      builder: (_) => ServiceListScreen(
+                        initialFilter: ServiceDiscoveryFilter(
+                          category: category.isNotEmpty ? category : null,
+                          autoApply: true,
+                        ),
+                      ),
                     ),
                   );
                 },
@@ -309,13 +347,19 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                         Icon(
                           Icons.search_off,
                           size: 64,
-                          color: DesignTokens.textSubtle.withValues(alpha: 0.4),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
                         ),
                         const SizedBox(height: 12),
                         Text(
                           'No services found',
                           style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(color: DesignTokens.textSubtle),
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -323,7 +367,9 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                               ? 'Try a different category or clear selection'
                               : 'Try adjusting your search',
                           style: TextStyle(
-                            color: DesignTokens.textSubtle,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                             fontSize: 13,
                           ),
                         ),
@@ -402,73 +448,378 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
       greetingIcon = Icons.nights_stay;
     }
 
-    final displayName = user?.displayName?.isNotEmpty == true
-        ? user!.displayName!.split(' ').first
-        : 'there';
+    // Fetch name from Firestore profile (falls back to Auth displayName)
+    return StreamBuilder<DocumentSnapshot>(
+      stream: user != null
+          ? FirestoreRefs.users().doc(user.uid).snapshots()
+          : null,
+      builder: (context, snapshot) {
+        String displayName = 'there';
+        if (snapshot.hasData && snapshot.data!.exists) {
+          final data = snapshot.data!.data() as Map<String, dynamic>?;
+          final firestoreName = (data?['name'] ?? '').toString().trim();
+          if (firestoreName.isNotEmpty) {
+            displayName = firestoreName.split(' ').first;
+          } else if (user?.displayName?.isNotEmpty == true) {
+            displayName = user!.displayName!.split(' ').first;
+          }
+        } else if (user?.displayName?.isNotEmpty == true) {
+          displayName = user!.displayName!.split(' ').first;
+        }
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: isDark
-              ? [
-                  DesignTokens.brandPrimary.withValues(alpha: 0.3),
-                  Colors.transparent,
-                ]
-              : [
-                  DesignTokens.brandPrimary.withValues(alpha: 0.08),
-                  Colors.transparent,
-                ],
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+        return Container(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: isDark
+                  ? [
+                      DesignTokens.brandPrimary.withValues(alpha: 0.3),
+                      Colors.transparent,
+                    ]
+                  : [
+                      DesignTokens.brandPrimary.withValues(alpha: 0.08),
+                      Colors.transparent,
+                    ],
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      greetingIcon,
-                      size: 20,
-                      color: DesignTokens.brandSecondary,
+                    Row(
+                      children: [
+                        Icon(
+                          greetingIcon,
+                          size: 20,
+                          color: DesignTokens.brandSecondary,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '$greeting, $displayName!',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(height: 4),
                     Text(
-                      '$greeting, $displayName!',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
+                      'Find the perfect service for your needs',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: isDark
+                            ? Colors.grey[400]
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Find the perfect service for your needs',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: isDark ? Colors.grey[400] : DesignTokens.textSubtle,
+              ),
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: DesignTokens.brandPrimary.withValues(
+                  alpha: 0.15,
+                ),
+                child: Text(
+                  displayName[0].toUpperCase(),
+                  style: const TextStyle(
+                    color: DesignTokens.brandPrimary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          CircleAvatar(
-            radius: 22,
-            backgroundColor: DesignTokens.brandPrimary.withValues(alpha: 0.15),
-            child: Text(
-              displayName[0].toUpperCase(),
-              style: const TextStyle(
-                color: DesignTokens.brandPrimary,
-                fontWeight: FontWeight.w700,
-                fontSize: 18,
+        );
+      },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Search suggestion model
+// ---------------------------------------------------------------------------
+class _SearchSuggestion {
+  const _SearchSuggestion({
+    required this.label,
+    required this.icon,
+    this.isCategory = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool isCategory;
+}
+
+// ---------------------------------------------------------------------------
+// Autocomplete search bar widget
+// ---------------------------------------------------------------------------
+class _SeekerSearchBar extends StatefulWidget {
+  const _SeekerSearchBar({
+    required this.controller,
+    required this.searchQuery,
+    required this.onChanged,
+    required this.onClear,
+    required this.onSuggestionTap,
+  });
+
+  final TextEditingController controller;
+  final String searchQuery;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+  final ValueChanged<_SearchSuggestion> onSuggestionTap;
+
+  @override
+  State<_SeekerSearchBar> createState() => _SeekerSearchBarState();
+}
+
+class _SeekerSearchBarState extends State<_SeekerSearchBar> {
+  final _focusNode = FocusNode();
+  final _layerLink = LayerLink();
+  OverlayEntry? _overlayEntry;
+  List<_SearchSuggestion> _suggestions = [];
+  bool _isLoading = false;
+
+  // Category suggestions derived from CategoryBar
+  static const _categorySuggestions = [
+    _SearchSuggestion(
+      label: 'Cleaning',
+      icon: Icons.cleaning_services,
+      isCategory: true,
+    ),
+    _SearchSuggestion(
+      label: 'Plumbing',
+      icon: Icons.plumbing,
+      isCategory: true,
+    ),
+    _SearchSuggestion(
+      label: 'Electrical',
+      icon: Icons.electrical_services,
+      isCategory: true,
+    ),
+    _SearchSuggestion(
+      label: 'Carpentry',
+      icon: Icons.carpenter,
+      isCategory: true,
+    ),
+    _SearchSuggestion(
+      label: 'Painting',
+      icon: Icons.format_paint,
+      isCategory: true,
+    ),
+    _SearchSuggestion(label: 'Gardening', icon: Icons.grass, isCategory: true),
+    _SearchSuggestion(
+      label: 'Moving',
+      icon: Icons.local_shipping,
+      isCategory: true,
+    ),
+    _SearchSuggestion(label: 'Beauty', icon: Icons.spa, isCategory: true),
+    _SearchSuggestion(label: 'Tutoring', icon: Icons.school, isCategory: true),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_onFocusChange);
+  }
+
+  @override
+  void dispose() {
+    _removeOverlay();
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChange() {
+    if (_focusNode.hasFocus) {
+      _updateSuggestions(widget.controller.text);
+    } else {
+      // Delay removal so tap events on overlay can fire first.
+      Future.delayed(const Duration(milliseconds: 200), _removeOverlay);
+    }
+  }
+
+  Future<void> _updateSuggestions(String query) async {
+    final q = query.trim().toLowerCase();
+
+    if (q.isEmpty) {
+      // Show all categories when input is empty
+      _suggestions = List.of(_categorySuggestions);
+      _showOverlay();
+      return;
+    }
+
+    // Filter categories
+    final catMatches = _categorySuggestions
+        .where((s) => s.label.toLowerCase().contains(q))
+        .toList();
+
+    // Query Firestore for matching service titles
+    setState(() => _isLoading = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('services')
+          .where('status', isEqualTo: 'active')
+          .limit(50)
+          .get();
+
+      final serviceMatches = <_SearchSuggestion>[];
+      final seen = <String>{};
+      for (final doc in snap.docs) {
+        final title = (doc.data()['title'] ?? '').toString();
+        final titleLower = title.toLowerCase();
+        if (titleLower.contains(q) && seen.add(titleLower)) {
+          serviceMatches.add(
+            _SearchSuggestion(label: title, icon: Icons.home_repair_service),
+          );
+        }
+        if (serviceMatches.length >= 5) break;
+      }
+
+      _suggestions = [...catMatches, ...serviceMatches];
+    } catch (_) {
+      _suggestions = catMatches;
+    }
+    if (mounted) setState(() => _isLoading = false);
+    if (_focusNode.hasFocus) _showOverlay();
+  }
+
+  void _showOverlay() {
+    _removeOverlay();
+    if (_suggestions.isEmpty && !_isLoading) return;
+
+    final overlay = Overlay.of(context);
+    final renderBox = context.findRenderObject() as RenderBox;
+    final size = renderBox.size;
+
+    _overlayEntry = OverlayEntry(
+      builder: (ctx) {
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return Positioned(
+          width: size.width,
+          child: CompositedTransformFollower(
+            link: _layerLink,
+            showWhenUnlinked: false,
+            offset: Offset(0, size.height + 4),
+            child: Material(
+              elevation: 6,
+              borderRadius: BorderRadius.circular(12),
+              color: isDark ? Colors.grey[900] : Colors.white,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 300),
+                  child: _isLoading
+                      ? const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Center(
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: EdgeInsets.zero,
+                          shrinkWrap: true,
+                          itemCount: _suggestions.length,
+                          itemBuilder: (_, i) {
+                            final s = _suggestions[i];
+                            return ListTile(
+                              dense: true,
+                              leading: Icon(
+                                s.icon,
+                                size: 20,
+                                color: s.isCategory
+                                    ? DesignTokens.brandPrimary
+                                    : Colors.grey[600],
+                              ),
+                              title: Text(s.label),
+                              trailing: s.isCategory
+                                  ? Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: DesignTokens.brandPrimary
+                                            .withValues(alpha: 0.1),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        'Category',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: DesignTokens.brandPrimary,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    )
+                                  : null,
+                              onTap: () {
+                                _removeOverlay();
+                                _focusNode.unfocus();
+                                widget.onSuggestionTap(s);
+                              },
+                            );
+                          },
+                        ),
+                ),
               ),
             ),
           ),
-        ],
+        );
+      },
+    );
+    overlay.insert(_overlayEntry!);
+  }
+
+  void _removeOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return CompositedTransformTarget(
+      link: _layerLink,
+      child: TextField(
+        controller: widget.controller,
+        focusNode: _focusNode,
+        onChanged: (value) {
+          widget.onChanged(value);
+          _updateSuggestions(value);
+        },
+        decoration: InputDecoration(
+          hintText: 'Search services or categories...',
+          prefixIcon: const Icon(Icons.search, color: Color(0xFF64748B)),
+          suffixIcon: widget.searchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: () {
+                    widget.onClear();
+                    _removeOverlay();
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: isDark ? Colors.grey[850] : DesignTokens.surfaceElevated,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(DesignTokens.radiusMd),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 14,
+          ),
+        ),
       ),
     );
   }

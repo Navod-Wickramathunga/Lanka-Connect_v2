@@ -8,6 +8,8 @@ import '../../utils/display_name_utils.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/user_roles.dart';
+import 'admin_banners_screen.dart';
+import 'admin_promotions_screen.dart';
 import 'admin_services_screen.dart';
 
 class AdminWebDashboardScreen extends StatelessWidget {
@@ -16,7 +18,7 @@ class AdminWebDashboardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 5,
+      length: 8,
       child: Column(
         children: [
           // ── Dashboard header ──
@@ -93,6 +95,26 @@ class AdminWebDashboardScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                Tab(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.view_carousel_outlined, size: 18),
+                      SizedBox(width: 6),
+                      Text('Banners'),
+                    ],
+                  ),
+                ),
+                Tab(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.local_offer_outlined, size: 18),
+                      SizedBox(width: 6),
+                      Text('Promotions'),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -105,6 +127,8 @@ class AdminWebDashboardScreen extends StatelessWidget {
                 _ReviewModerationPanel(),
                 _MessageModerationPanel(),
                 _ActivityLogPanel(),
+                AdminBannersPanel(),
+                AdminPromotionsPanel(),
               ],
             ),
           ),
@@ -120,6 +144,7 @@ class _DashboardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
       child: Row(
@@ -140,7 +165,7 @@ class _DashboardHeader extends StatelessWidget {
                   'Monitor platform performance and manage content',
                   style: TextStyle(
                     fontSize: 14,
-                    color: DesignTokens.textSubtle,
+                    color: scheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -153,8 +178,6 @@ class _DashboardHeader extends StatelessWidget {
               );
             },
             style: OutlinedButton.styleFrom(
-              foregroundColor: DesignTokens.textPrimary,
-              side: const BorderSide(color: DesignTokens.borderStrong),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -887,9 +910,9 @@ class _StatCardEnhanced extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
-                    color: DesignTokens.textSubtle,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -922,7 +945,10 @@ class _RevenueBarChart extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               'Monthly payment totals',
-              style: TextStyle(fontSize: 12, color: DesignTokens.textSubtle),
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 20),
             StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -1095,7 +1121,10 @@ class _BookingTrendsChart extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               'Monthly booking counts',
-              style: TextStyle(fontSize: 12, color: DesignTokens.textSubtle),
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 20),
             StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(

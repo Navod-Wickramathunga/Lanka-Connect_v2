@@ -20,7 +20,7 @@ flutterfire configure --project=lankaconnect-app --platforms=android,ios
 ```
 
 This generates/updates:
-- `lib/firebase_options.dart`
+- `lib/firebase_options.dart` (legacy single-env setup)
 - `android/app/google-services.json`
 - `ios/Runner/GoogleService-Info.plist`
 
@@ -50,19 +50,48 @@ npm install
 cd ..
 ```
 
-## 4) Deploy Firestore + Functions
+## 4) Environment-specific FlutterFire config (staging + production)
+
+Generate both runtime option files:
+
+```bash
+flutterfire configure --project=<staging-project-id> --platforms=android,ios,web --out=lib/firebase_options_staging.dart
+flutterfire configure --project=<production-project-id> --platforms=android,ios,web --out=lib/firebase_options_production.dart
+```
+
+App environment is selected with `--dart-define=APP_ENV=<staging|production|emulator>`.
+
+## 5) Deploy Firestore + Functions
 
 ```bash
 firebase deploy --only firestore:rules,firestore:indexes,storage:rules,functions
 ```
 
-## 5) Run the App
+For alias-based deploys:
+
+```bash
+firebase use staging
+firebase deploy --only hosting,firestore:rules,firestore:indexes,storage
+
+firebase use production
+firebase deploy --only hosting,firestore:rules,firestore:indexes,storage
+```
+
+## 6) Run the App
 
 ```bash
 flutter run
 ```
 
-## 6) Seed Demo Data (for presentation)
+Preferred scripts:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/run_app_staging.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run_app_production.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run_app_with_emulators.ps1
+```
+
+## 7) Seed Demo Data (for presentation)
 
 - Sign in as an admin user.
 - In Home screen app bar, click the dataset icon.
@@ -75,7 +104,7 @@ Created demo entities include:
 - 1 review
 - 1 notification to confirm seed completed
 
-## 7) Firestore Indexes
+## 8) Firestore Indexes
 
 If you add new compound Firestore queries and see "index required":
 
@@ -87,7 +116,7 @@ If you add new compound Firestore queries and see "index required":
 firebase deploy --only firestore:indexes
 ```
 
-## 8) Emulator (Optional)
+## 9) Emulator (Optional)
 
 ```bash
 firebase emulators:start
@@ -103,3 +132,18 @@ Configured ports:
 ## Security Note
 
 Do not commit sensitive Firebase config files to public repos.
+
+## Google Maps Checklist
+
+For Android map rendering issues (blank tiles/no map), verify:
+
+1. **Maps SDK for Android** is enabled in Google Cloud.
+2. **Billing** is enabled for the project.
+3. API key restrictions include:
+   - Application restriction: Android app
+   - Package: `com.example.lanka_connect`
+   - Correct SHA-1 for debug/release keystores
+4. Runtime config files used by the app are:
+   - `android/app/google-services.json`
+   - `lib/firebase_options.dart`
+5. `.firebase_templates/*` files are templates only and not runtime sources.

@@ -65,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _roleLabel(String role) {
     if (role == UserRoles.provider) return 'Provider';
     if (role == UserRoles.admin) return 'Admin';
+    if (role == UserRoles.guest) return 'Guest';
     return 'Seeker';
   }
 
@@ -131,6 +132,18 @@ class _HomeScreenState extends State<HomeScreen> {
       ];
     }
 
+    if (role == UserRoles.guest) {
+      return const [
+        WebShellNavItem(id: 'home', label: 'Home', icon: Icons.home_rounded),
+        WebShellNavItem(id: 'services', label: 'Services', icon: Icons.search),
+        WebShellNavItem(
+          id: 'bookings',
+          label: 'Bookings',
+          icon: Icons.calendar_today,
+        ),
+      ];
+    }
+
     return const [
       WebShellNavItem(id: 'home', label: 'Home', icon: Icons.home_rounded),
       WebShellNavItem(id: 'services', label: 'Services', icon: Icons.search),
@@ -168,6 +181,14 @@ class _HomeScreenState extends State<HomeScreen> {
         'bookings': BookingListScreen(),
         'chat': ChatListScreen(),
         'profile': ProfileScreen(),
+      };
+    }
+
+    if (role == UserRoles.guest) {
+      return const {
+        'home': SeekerHomeScreen(),
+        'services': ServiceListScreen(),
+        'bookings': BookingListScreen(),
       };
     }
 
@@ -328,6 +349,31 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _showGuestUpgradePrompt() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Create an Account'),
+        content: const Text(
+          'You are using guest mode. Create an account to keep booking history, chat, and notifications permanently.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Later'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await FirebaseAuth.instance.signOut();
+            },
+            child: const Text('Create Account'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -347,7 +393,9 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
         final data = snapshot.data?.data() ?? {};
-        final role = UserRoles.normalize(data['role']);
+        final role = user.isAnonymous
+            ? UserRoles.guest
+            : UserRoles.normalize(data['role']);
         _ensureNotificationSubscription(user.uid, role);
 
         final mobileRoutes = MobileRoutes.forRole(role);
@@ -365,14 +413,19 @@ class _HomeScreenState extends State<HomeScreen> {
           final routeLabel = webNavItems
               .firstWhere((item) => item.id == routeId)
               .label;
+          final backendLabel = FirebaseEnv.backendLabel();
+          final subtitleParts = <String>[
+            _roleLabel(role),
+            if (user.email != null) user.email!,
+            if (backendLabel.isNotEmpty) 'Backend: $backendLabel',
+          ];
           return WebShell(
             appTitle: 'Lanka Connect',
             navItems: webNavItems,
             currentId: routeId,
             onSelect: _setWebRoute,
             pageTitle: routeLabel,
-            pageSubtitle:
-                '${_roleLabel(role)}${user.email != null ? ' | ${user.email}' : ''} | Backend: ${FirebaseEnv.backendLabel()}',
+            pageSubtitle: subtitleParts.join(' | '),
             actions: [
               ValueListenableBuilder<ThemeMode>(
                 valueListenable: AppThemeController.themeMode,
@@ -403,6 +456,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   tooltip: 'Seed demo data',
                 ),
               _notificationAction(user.uid, role),
+              if (role == UserRoles.guest)
+                IconButton(
+                  onPressed: _showGuestUpgradePrompt,
+                  tooltip: 'Create account',
+                  icon: const Icon(Icons.person_add_alt_1),
+                ),
               IconButton(
                 onPressed: () => FirebaseAuth.instance.signOut(),
                 icon: const Icon(Icons.logout),
@@ -422,7 +481,7 @@ class _HomeScreenState extends State<HomeScreen> {
             iconTheme: IconThemeData(
               color: Theme.of(context).brightness == Brightness.dark
                   ? Colors.white
-                  : DesignTokens.textPrimary,
+                  : Theme.of(context).colorScheme.onSurface,
             ),
             title: Text(
               'Lanka Connect',
@@ -449,6 +508,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
               _notificationAction(user.uid, role),
+              if (role == UserRoles.guest)
+                IconButton(
+                  onPressed: _showGuestUpgradePrompt,
+                  tooltip: 'Create account',
+                  icon: const Icon(Icons.person_add_alt_1),
+                ),
             ],
           ),
           body: AnimatedSwitcher(
@@ -626,6 +691,7 @@ class _HomeScreenState extends State<HomeScreen> {
     String role,
   ) {
     final displayName = (data['name'] ?? user.displayName ?? 'User').toString();
+    final scheme = Theme.of(context).colorScheme;
     return Drawer(
       child: Column(
         children: [
@@ -662,7 +728,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
-            color: DesignTokens.surfaceSoft,
+            color: scheme.surfaceContainerHigh,
             child: Row(
               children: [
                 CircleAvatar(
@@ -685,15 +751,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Text(
                       displayName,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 16,
+                        color: scheme.onSurface,
                       ),
                     ),
                     Text(
                       _roleLabel(role),
                       style: TextStyle(
-                        color: DesignTokens.brandPrimary,
+                        color: scheme.primary,
                         fontSize: 13,
                       ),
                     ),
@@ -718,8 +785,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   icon: const Icon(Icons.logout, size: 18),
                   label: const Text('Sign Out'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red.shade50,
-                    foregroundColor: Colors.red,
+                    backgroundColor: scheme.errorContainer,
+                    foregroundColor: scheme.onErrorContainer,
                     elevation: 0,
                   ),
                 ),

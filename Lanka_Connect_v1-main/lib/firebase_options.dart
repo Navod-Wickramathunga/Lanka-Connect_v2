@@ -57,7 +57,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBcinz104MNv8RjdZQX32w5acmreKhJ5Qw',
-    appId: '1:262402675622:android:4155e440124b4dec67b567',
+    appId: '1:262402675622:android:543534587e6f734467b567',
     messagingSenderId: '262402675622',
     projectId: 'lankaconnect-app',
     storageBucket: 'lankaconnect-app.firebasestorage.app',
@@ -72,4 +72,5 @@ class DefaultFirebaseOptions {
     iosClientId: '262402675622-54uj3qjcbs22580nscvvmo89d3737pqb.apps.googleusercontent.com',
     iosBundleId: 'com.example.lankaConnect',
   );
+
 }

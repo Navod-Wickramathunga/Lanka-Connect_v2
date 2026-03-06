@@ -26,4 +26,19 @@ class FirestoreRefs {
 
   static CollectionReference<Map<String, dynamic>> payments() =>
       db.collection('payments');
+
+  static CollectionReference<Map<String, dynamic>> offers() =>
+      db.collection('offers');
+
+  static CollectionReference<Map<String, dynamic>> banners() =>
+      db.collection('banners');
+
+  static CollectionReference<Map<String, dynamic>> promotions() =>
+      db.collection('promotions');
+
+  static CollectionReference<Map<String, dynamic>> providerBankAccounts() =>
+      db.collection('providerBankAccounts');
+
+  static CollectionReference<Map<String, dynamic>> paymentReceipts() =>
+      db.collection('paymentReceipts');
 }

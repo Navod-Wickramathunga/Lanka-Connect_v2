@@ -105,6 +105,29 @@ class MobileRoutes {
       ];
     }
 
+    if (role == UserRoles.guest) {
+      return [
+        MobileRouteSpec(
+          id: MobileAppRouteId.home,
+          label: 'Home',
+          icon: Icons.home_rounded,
+          builder: (_) => const SeekerHomeScreen(),
+        ),
+        MobileRouteSpec(
+          id: MobileAppRouteId.services,
+          label: 'Services',
+          icon: Icons.search,
+          builder: (_) => const ServiceListScreen(),
+        ),
+        MobileRouteSpec(
+          id: MobileAppRouteId.bookings,
+          label: 'Bookings',
+          icon: Icons.calendar_today,
+          builder: (_) => const BookingListScreen(),
+        ),
+      ];
+    }
+
     return [
       MobileRouteSpec(
         id: MobileAppRouteId.home,

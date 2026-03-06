@@ -281,6 +281,7 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
   }
 
   Widget _buildRatingRow() {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
     return Row(
       children: [
         ..._starIcons(widget.rating),
@@ -296,7 +297,7 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
         const SizedBox(width: 4),
         Text(
           '(${widget.reviewCount})',
-          style: TextStyle(fontSize: 12, color: DesignTokens.textSubtle),
+          style: TextStyle(fontSize: 12, color: muted),
         ),
       ],
     );
@@ -316,7 +317,9 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
           Icon(
             Icons.star_border,
             size: 14,
-            color: DesignTokens.textSubtle.withValues(alpha: 0.4),
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
           ),
         );
       }
@@ -325,16 +328,17 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
   }
 
   Widget _buildLocation() {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
     return Row(
       children: [
-        Icon(Icons.location_on, size: 14, color: DesignTokens.textSubtle),
+        Icon(Icons.location_on, size: 14, color: muted),
         const SizedBox(width: 2),
         Expanded(
           child: Text(
             widget.location!,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12, color: DesignTokens.textSubtle),
+            style: TextStyle(fontSize: 12, color: muted),
           ),
         ),
       ],
@@ -342,6 +346,7 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
   }
 
   Widget _buildPriceRow() {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -363,14 +368,14 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
         if (widget.distance != null)
           Row(
             children: [
-              Icon(Icons.near_me, size: 14, color: DesignTokens.textSubtle),
+              Icon(Icons.near_me, size: 14, color: muted),
               const SizedBox(width: 2),
               Text(
                 widget.distance!,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: DesignTokens.textSubtle,
+                  color: muted,
                 ),
               ),
             ],

@@ -3,18 +3,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lanka_connect/screens/auth/auth_screen.dart';
 
 void main() {
-  testWidgets('auth entry screen renders and toggles signup mode', (
+  testWidgets('auth mobile entry toggles signup mode while keeping mobile layout', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const MaterialApp(home: AuthScreen()));
+    await tester.pumpWidget(
+      const MaterialApp(home: AuthScreen()),
+    );
 
-    // Default state: login mode for Seeker portal
     expect(find.text('Seeker portal login'), findsOneWidget);
     expect(find.text('Login to Seeker Portal'), findsOneWidget);
-    expect(find.text('Need an account? Sign up here'), findsOneWidget);
+    expect(find.text('Welcome back to your local service network'), findsOneWidget);
+    // 'Forgot password?' is shown in mobile login mode
+    expect(find.text('Forgot password?'), findsOneWidget);
     expect(find.text('Create account as'), findsNothing);
 
-    // Toggle to signup mode using the mode switch chip in the form header.
     await tester.tap(find.text('Sign up'));
     await tester.pumpAndSettle();
 
@@ -22,5 +24,6 @@ void main() {
     expect(find.text('Create account as'), findsOneWidget);
     expect(find.text('Create Seeker Account'), findsOneWidget);
     expect(find.text('Already have an account? Sign in'), findsOneWidget);
+    expect(find.text('Forgot password?'), findsNothing);
   });
 }

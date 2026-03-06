@@ -38,6 +38,7 @@ dependencies:
   firebase_auth: ^6.1.4
   cloud_firestore: ^6.1.2
   firebase_storage: ^13.0.6
+  cloud_functions: ^6.0.0
   firebase_messaging: ^16.1.1
   firebase_crashlytics: ^5.0.7
   image_picker: ^1.1.2
@@ -54,6 +55,8 @@ dependencies:
   fl_chart: ^0.70.2
   cached_network_image: ^3.4.1
   smooth_page_indicator: ^1.2.0+3
+  url_launcher: ^6.3.1
+  app_links: ^7.0.0
 
 dev_dependencies:
   flutter_test:

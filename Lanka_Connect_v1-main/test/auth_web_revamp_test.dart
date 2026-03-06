@@ -1,0 +1,176 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:lanka_connect/screens/auth/auth_screen.dart';
+
+Future<void> _pumpWebAuth(
+  WidgetTester tester, {
+  Size size = const Size(1280, 900),
+  Future<void> Function(String email)? passwordResetHandler,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+
+  await tester.pumpWidget(
+    MaterialApp(
+      home: AuthScreen(
+        forceWebLayoutForTest: true,
+        passwordResetHandler: passwordResetHandler,
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  testWidgets(
+    'web auth defaults to seeker portal with guest and chip behavior',
+    (tester) async {
+      await _pumpWebAuth(tester);
+
+      expect(find.text('Continue as Guest'), findsOneWidget);
+      expect(find.text('Seeker portal login'), findsOneWidget);
+      expect(find.byKey(const Key('forgot_password_button')), findsOneWidget);
+
+      await tester.tap(find.text('Provider').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Provider workspace login'), findsOneWidget);
+      expect(find.text('Login to Provider Portal'), findsOneWidget);
+
+      await tester.tap(find.text('Admin').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Admin control center login'), findsOneWidget);
+      expect(find.text('Login to Admin Portal'), findsOneWidget);
+    },
+  );
+
+  testWidgets('signup mode blocks admin account creation on submit', (
+    tester,
+  ) async {
+    await _pumpWebAuth(tester);
+
+    await tester.tap(find.text('Sign up'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('forgot_password_button')), findsNothing);
+
+    await tester.tap(find.text('Admin').first);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'admin@demo.com');
+    await tester.enterText(find.byType(TextFormField).at(1), 'secret123');
+
+    await tester.tap(find.text('Create Seeker Account'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Admin accounts cannot be created here. Use an existing admin account to sign in.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('forgot password dialog validates and sends email', (
+    tester,
+  ) async {
+    String? submittedEmail;
+    await _pumpWebAuth(
+      tester,
+      passwordResetHandler: (email) async {
+        submittedEmail = email;
+      },
+    );
+
+    await tester.enterText(
+      find.byType(TextFormField).at(0),
+      'user@example.com',
+    );
+    await tester.tap(find.byKey(const Key('forgot_password_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Reset Password'), findsOneWidget);
+    expect(find.byKey(const Key('forgot_password_email')), findsOneWidget);
+    // Email appears in both the login field and pre-filled dialog field
+    expect(find.text('user@example.com'), findsAtLeast(1));
+
+    await tester.enterText(find.byKey(const Key('forgot_password_email')), '');
+    await tester.tap(find.byKey(const Key('forgot_password_submit')));
+    await tester.pumpAndSettle();
+    expect(find.text('Email is required'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('forgot_password_email')),
+      'invalid-email',
+    );
+    await tester.tap(find.byKey(const Key('forgot_password_submit')));
+    await tester.pumpAndSettle();
+    expect(find.text('Enter a valid email address'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('forgot_password_email')),
+      'user@example.com',
+    );
+    await tester.tap(find.byKey(const Key('forgot_password_submit')));
+    await tester.pumpAndSettle();
+
+    expect(submittedEmail, 'user@example.com');
+    expect(find.byKey(const Key('forgot_password_success')), findsOneWidget);
+    expect(
+      find.text(
+        'If an account exists for this email, you will receive reset instructions shortly.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reset Password'), findsNothing);
+  });
+
+  testWidgets('forgot password shows mapped firebase errors', (tester) async {
+    await _pumpWebAuth(
+      tester,
+      passwordResetHandler: (email) async {
+        throw FirebaseAuthException(
+          code: 'invalid-email',
+          message: 'invalid email from firebase',
+        );
+      },
+    );
+
+    await tester.tap(find.byKey(const Key('forgot_password_button')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('forgot_password_email')),
+      'good@example.com',
+    );
+    await tester.tap(find.byKey(const Key('forgot_password_submit')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('The email address is not valid.'), findsOneWidget);
+    expect(find.byKey(const Key('forgot_password_error')), findsOneWidget);
+  });
+
+  testWidgets('web auth adapts layout across wide medium and compact widths', (
+    tester,
+  ) async {
+    await _pumpWebAuth(tester, size: const Size(1400, 900));
+    expect(find.byKey(const Key('auth_web_layout_wide')), findsOneWidget);
+    expect(find.byKey(const Key('auth_web_hero')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await _pumpWebAuth(tester, size: const Size(980, 900));
+    expect(find.byKey(const Key('auth_web_layout_medium')), findsOneWidget);
+    expect(find.byKey(const Key('auth_web_hero')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await _pumpWebAuth(tester, size: const Size(600, 900));
+    expect(find.byKey(const Key('auth_web_layout_compact')), findsOneWidget);
+    expect(find.byKey(const Key('auth_web_hero')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
