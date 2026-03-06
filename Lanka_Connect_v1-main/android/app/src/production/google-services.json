@@ -12,7 +12,20 @@
           "package_name": "com.example.lanka_connect"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "386994873681-942t48eesfjivh1lblg8ec44o895oc4e.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.lanka_connect",
+            "certificate_hash": "1071e7e430f62154872187481955c8fb0bb78ebe"
+          }
+        },
+        {
+          "client_id": "386994873681-ngmps9cbj7rvliciead73nkqvuh09ff1.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCa9L_LiMkTqCVF8wdGB2BV7MEVkcX42i0"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "386994873681-ngmps9cbj7rvliciead73nkqvuh09ff1.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "386994873681-o0bqhqb99tov8guf2ovupgaf5p5r5beo.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.lankaConnect"
+              }
+            }
+          ]
         }
       }
     }
