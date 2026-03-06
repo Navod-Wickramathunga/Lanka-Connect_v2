@@ -61,7 +61,7 @@ service cloud.firestore {
     match /users/{userId} {
       allow create: if (
         isSelf(userId)
-        && request.resource.data.role in ['seeker', 'provider']
+        && request.resource.data.role in ['seeker', 'provider', 'guest']
       ) || isAdmin();
 
       // Any signed-in user can read any user profile (needed for display

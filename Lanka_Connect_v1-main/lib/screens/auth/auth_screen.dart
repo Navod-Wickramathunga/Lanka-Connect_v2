@@ -241,14 +241,19 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   String _guestLoginError(FirebaseAuthException e) {
+    final message = e.message?.toLowerCase() ?? '';
     switch (e.code) {
       case 'operation-not-allowed':
+      case 'admin-restricted-operation':
         return 'Guest access is currently disabled. Please sign in with an account.';
       case 'network-request-failed':
         return 'Network error. Check your connection and try guest access again.';
       case 'too-many-requests':
         return 'Too many attempts. Please wait a moment and try again.';
       default:
+        if (message.contains('restricted to administrators only')) {
+          return 'Guest access is currently disabled. Please sign in with an account.';
+        }
         return e.message ?? 'Guest login failed.';
     }
   }

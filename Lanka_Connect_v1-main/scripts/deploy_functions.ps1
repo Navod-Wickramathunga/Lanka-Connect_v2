@@ -14,9 +14,15 @@
   powershell -ExecutionPolicy Bypass -File scripts/deploy_functions.ps1
 #>
 
+param(
+    [ValidateSet('staging', 'production', 'default')]
+    [string]$ProjectAlias = 'production'
+)
+
 $ErrorActionPreference = 'Stop'
 
 Write-Host "`n=== Lanka Connect: Cloud Functions Deployment ===" -ForegroundColor Cyan
+Write-Host "Target Firebase alias: $ProjectAlias" -ForegroundColor Cyan
 
 # Verify Firebase CLI
 try {
@@ -31,14 +37,14 @@ try {
 if (-not (Test-Path "functions/node_modules")) {
     Write-Host "Installing Functions dependencies..." -ForegroundColor Yellow
     Push-Location functions
-    npm install
+    npm.cmd install
     Pop-Location
 }
 
 # Build TypeScript
 Write-Host "`nBuilding TypeScript..." -ForegroundColor Yellow
 Push-Location functions
-npm run build
+npm.cmd run build
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: TypeScript build failed." -ForegroundColor Red
     Pop-Location
@@ -49,7 +55,11 @@ Write-Host "Build successful." -ForegroundColor Green
 
 # Deploy
 Write-Host "`nDeploying Cloud Functions..." -ForegroundColor Yellow
-firebase deploy --only functions
+if (-not $env:FUNCTIONS_DISCOVERY_TIMEOUT) {
+    $env:FUNCTIONS_DISCOVERY_TIMEOUT = "60000"
+    Write-Host "Using FUNCTIONS_DISCOVERY_TIMEOUT=$($env:FUNCTIONS_DISCOVERY_TIMEOUT)" -ForegroundColor DarkGray
+}
+firebase deploy --project $ProjectAlias --only functions
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`n=== Deployment successful! ===" -ForegroundColor Green

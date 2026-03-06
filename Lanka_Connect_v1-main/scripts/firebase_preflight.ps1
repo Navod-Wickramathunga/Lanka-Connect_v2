@@ -33,7 +33,11 @@ Assert-Command -Name "firebase"
 Assert-Command -Name "flutter"
 Assert-Command -Name "flutterfire"
 
-$configureHint = "Run 'flutterfire configure --project=lankaconnect-app --platforms=android,ios' from repository root."
+$configureHint = @"
+Run one of these from repository root:
+  flutterfire configure --project=lankaconnect-app --platforms=android,ios,web --out=lib/firebase_options_staging.dart
+  flutterfire configure --project=new-lanka-connect-app --platforms=android,ios,web --out=lib/firebase_options_production.dart
+"@
 
 $loginOutput = firebase login:list 2>&1
 if ($LASTEXITCODE -ne 0) {
