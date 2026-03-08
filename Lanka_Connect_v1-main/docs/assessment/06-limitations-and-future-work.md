@@ -1,42 +1,36 @@
 # Limitations and Future Work
 
-## Current Limitations (Spark Plan)
+## Current Limitations
 
-1. No deployed Cloud Functions in demo baseline.
-- Side effects are executed in-app via Firestore writes/transactions.
-- This is valid for assessment demos but not ideal for trust boundaries in production.
+1. Push notifications are still primarily document-driven.
+- Notification records are created in Firestore and read in-app.
+- Full FCM delivery lifecycle (token rotation, background delivery analytics) needs expansion.
 
-2. Push notifications are in-app/document-based only.
-- Notification records are written to Firestore.
-- No FCM push delivery pipeline is included in Spark baseline.
+2. Payment hardening is functional but not complete.
+- Gateway checkout + webhook + bank-transfer verification are implemented.
+- Refund workflows, dispute handling, and reconciliation dashboards are not yet implemented.
 
-3. Payments are demo-only.
-- Payment records are simulated in Firestore (`gateway: demo`).
-- No real payment gateway integration, reconciliation, or webhook handling.
+3. Integration execution remains target-dependent.
+- `integration_test` is currently validated mostly on Android device/emulator targets.
+- A wider CI matrix (device farm and repeatable web strategy) is still pending.
 
-4. Some integration execution is device-target specific.
-- `integration_test` execution is verified on Android device targets.
-- Web integration execution via `flutter test` is not available.
+4. Operational observability can be improved.
+- Logging exists in Cloud Functions, but centralized alerting/SLO dashboards are limited.
 
-## Future Work (Blaze / Production Track)
+## Future Work
 
-1. Move sensitive side effects to backend Cloud Functions (Blaze).
-- Service moderation notifications.
-- Provider rating aggregate updates.
-- Demo/ops seed jobs (as admin-only callable or scheduled tasks).
+1. Add payment reliability enhancements.
+- Introduce explicit idempotency keys and retry-safe state transitions.
+- Add refund APIs and settlement exports for finance reporting.
 
-2. Add real push notifications.
-- Integrate Firebase Cloud Messaging.
-- Add token lifecycle management and topic/user targeting.
+2. Complete FCM production push pipeline.
+- Persist/manage device tokens securely.
+- Add segmented targeting and delivery/engagement reporting.
 
-3. Introduce real payments.
-- Integrate payment provider SDK and backend webhook verification.
-- Add idempotency keys, refund flows, and settlement reporting.
+3. Improve backend governance and monitoring.
+- Add Cloud Logging metrics and alert policies for payment failures and webhook anomalies.
+- Track moderation and support SLAs via dashboard panels.
 
-4. Improve observability and operations.
-- Structured logging and alerting for errors and fraud patterns.
-- Dashboards for moderation SLAs and transaction success rates.
-
-5. Strengthen QA automation.
-- Expand emulator-backed integration matrix on CI.
-- Add deterministic seed/teardown for repeatable end-to-end suites.
+4. Expand QA automation.
+- Run emulator-backed integration suites in CI on every release branch.
+- Add deterministic seed/teardown workflows and regression snapshots.

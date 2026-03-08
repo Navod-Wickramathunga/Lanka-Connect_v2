@@ -197,17 +197,27 @@ class MobileStatusChip extends StatelessWidget {
 }
 
 class MobileEmptyState extends StatelessWidget {
-  const MobileEmptyState({super.key, required this.title, required this.icon});
+  const MobileEmptyState({
+    super.key,
+    required this.title,
+    required this.icon,
+    this.subtitle,
+    this.action,
+  });
 
   final String title;
   final IconData icon;
+  final String? subtitle;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
     return MobileStatePanel(
       icon: icon,
       title: title,
+      subtitle: subtitle,
       tone: MobileStateTone.muted,
+      action: action,
     );
   }
 }

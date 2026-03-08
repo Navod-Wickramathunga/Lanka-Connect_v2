@@ -43,8 +43,9 @@ class RequestListScreen extends StatelessWidget {
         // Look up the service price
         double amount = 0;
         if (serviceId.isNotEmpty) {
-          final serviceDoc =
-              await FirestoreRefs.services().doc(serviceId).get();
+          final serviceDoc = await FirestoreRefs.services()
+              .doc(serviceId)
+              .get();
           final serviceData = serviceDoc.data();
           if (serviceData != null && serviceData['price'] is num) {
             amount = (serviceData['price'] as num).toDouble();
@@ -77,8 +78,7 @@ class RequestListScreen extends StatelessWidget {
         await NotificationService.createMany(
           recipientIds: [seekerId, providerId],
           title: 'Service request $status',
-          body:
-              'Request ${requestId.substring(0, requestId.length > 6 ? 6 : requestId.length)} has been $status.',
+          body: 'Your service request has been $status.',
           type: 'request',
           data: {'requestId': requestId, 'status': status},
         );
@@ -157,6 +157,8 @@ class RequestListScreen extends StatelessWidget {
               body: const MobileEmptyState(
                 title: 'No pending requests.',
                 icon: Icons.inbox,
+                subtitle:
+                    'New booking requests from seekers\nwill appear here.',
               ),
             );
           }

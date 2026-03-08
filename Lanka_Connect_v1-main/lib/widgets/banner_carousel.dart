@@ -12,12 +12,24 @@ class BannerData {
     required this.ctaText,
     required this.color,
     this.imageUrl,
+    this.scheduledStart,
+    this.scheduledEnd,
   });
   final String title;
   final String subtitle;
   final String ctaText;
   final Color color;
   final String? imageUrl;
+  final DateTime? scheduledStart;
+  final DateTime? scheduledEnd;
+
+  /// Whether this banner should be visible right now based on its schedule.
+  bool get isWithinSchedule {
+    final now = DateTime.now();
+    if (scheduledStart != null && now.isBefore(scheduledStart!)) return false;
+    if (scheduledEnd != null && now.isAfter(scheduledEnd!)) return false;
+    return true;
+  }
 
   /// Create from Firestore document data.
   factory BannerData.fromMap(Map<String, dynamic> data) {
@@ -34,6 +46,12 @@ class BannerData {
       ctaText: (data['ctaText'] ?? 'Learn More').toString(),
       color: color,
       imageUrl: (data['imageUrl'] ?? '').toString(),
+      scheduledStart: data['scheduledStart'] != null
+          ? (data['scheduledStart'] as Timestamp).toDate()
+          : null,
+      scheduledEnd: data['scheduledEnd'] != null
+          ? (data['scheduledEnd'] as Timestamp).toDate()
+          : null,
     );
   }
 }
@@ -118,6 +136,7 @@ class _BannerCarouselState extends State<BannerCarousel> {
         if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
           banners = snapshot.data!.docs
               .map((d) => BannerData.fromMap(d.data()))
+              .where((b) => b.isWithinSchedule)
               .toList();
         } else {
           banners = _defaultBanners;
@@ -176,6 +195,8 @@ class _BannerSlide extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasImage = banner.imageUrl != null && banner.imageUrl!.isNotEmpty;
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4),
       decoration: BoxDecoration(
@@ -185,6 +206,16 @@ class _BannerSlide extends StatelessWidget {
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
         ),
+        image: hasImage
+            ? DecorationImage(
+                image: NetworkImage(banner.imageUrl!),
+                fit: BoxFit.cover,
+                colorFilter: ColorFilter.mode(
+                  banner.color.withValues(alpha: 0.55),
+                  BlendMode.darken,
+                ),
+              )
+            : null,
         boxShadow: [
           BoxShadow(
             color: banner.color.withValues(alpha: 0.3),

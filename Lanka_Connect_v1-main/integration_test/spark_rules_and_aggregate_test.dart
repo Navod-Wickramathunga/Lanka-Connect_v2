@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:lanka_connect/firebase_options.dart';
 import 'package:lanka_connect/utils/demo_data_service.dart';
-import 'package:lanka_connect/utils/review_service.dart';
+// review_service import removed — aggregate tested via Firestore directly
 
 bool _emulatorsConfigured = false;
 

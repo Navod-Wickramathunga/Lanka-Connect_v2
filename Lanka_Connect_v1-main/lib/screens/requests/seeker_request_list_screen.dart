@@ -76,6 +76,8 @@ class SeekerRequestListScreen extends StatelessWidget {
               body: const MobileEmptyState(
                 title: 'No service requests yet.',
                 icon: Icons.inbox,
+                subtitle:
+                    'Browse services and submit a request\nto get started.',
               ),
             );
           }

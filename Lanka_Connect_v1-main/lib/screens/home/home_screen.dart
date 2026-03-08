@@ -443,7 +443,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
-              if (role == UserRoles.admin)
+              if (role == UserRoles.admin && !FirebaseEnv.isProduction)
                 IconButton(
                   onPressed: _seeding ? null : _seedDemoData,
                   icon: _seeding
@@ -786,10 +786,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     Text(
                       _roleLabel(role),
-                      style: TextStyle(
-                        color: scheme.primary,
-                        fontSize: 13,
-                      ),
+                      style: TextStyle(color: scheme.primary, fontSize: 13),
                     ),
                   ],
                 ),

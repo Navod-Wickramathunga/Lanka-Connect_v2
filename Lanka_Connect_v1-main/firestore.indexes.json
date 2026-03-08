@@ -220,6 +220,34 @@
           "mode": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "banners",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "active",
+          "mode": "ASCENDING"
+        },
+        {
+          "fieldPath": "order",
+          "mode": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "promotions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "active",
+          "mode": "ASCENDING"
+        },
+        {
+          "fieldPath": "order",
+          "mode": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

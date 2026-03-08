@@ -26,7 +26,7 @@ Future<void> _pumpWebAuth(
 
 void main() {
   testWidgets(
-    'web auth defaults to seeker portal with guest and chip behavior',
+    'web auth defaults to seeker portal with provider chip behavior',
     (tester) async {
       await _pumpWebAuth(tester);
 
@@ -34,19 +34,31 @@ void main() {
       expect(find.text('Seeker portal login'), findsOneWidget);
       expect(find.byKey(const Key('forgot_password_button')), findsOneWidget);
 
+      // Admin chip should be present on login page
+      expect(find.text('Admin'), findsOneWidget);
+
+      // Tap admin chip and verify headline
+      await tester.tap(find.text('Admin').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Admin control center login'), findsOneWidget);
+
+      // Tap back to seeker
+      await tester.tap(find.text('Seeker').first);
+      await tester.pumpAndSettle();
+
       await tester.tap(find.text('Provider').first);
       await tester.pumpAndSettle();
       expect(find.text('Provider workspace login'), findsOneWidget);
       expect(find.text('Login to Provider Portal'), findsOneWidget);
 
-      await tester.tap(find.text('Admin').first);
+      // Tap back to seeker
+      await tester.tap(find.text('Seeker').first);
       await tester.pumpAndSettle();
-      expect(find.text('Admin control center login'), findsOneWidget);
-      expect(find.text('Login to Admin Portal'), findsOneWidget);
+      expect(find.text('Seeker portal login'), findsOneWidget);
     },
   );
 
-  testWidgets('signup mode blocks admin account creation on submit', (
+  testWidgets('signup mode shows only seeker and provider portals', (
     tester,
   ) async {
     await _pumpWebAuth(tester);
@@ -56,21 +68,16 @@ void main() {
 
     expect(find.byKey(const Key('forgot_password_button')), findsNothing);
 
-    await tester.tap(find.text('Admin').first);
+    // Admin chip should not be present
+    expect(find.text('Admin'), findsNothing);
+
+    // Only Seeker and Provider should be selectable
+    expect(find.text('Seeker'), findsOneWidget);
+    expect(find.text('Provider'), findsOneWidget);
+
+    await tester.tap(find.text('Provider').first);
     await tester.pumpAndSettle();
-
-    await tester.enterText(find.byType(TextFormField).at(0), 'admin@demo.com');
-    await tester.enterText(find.byType(TextFormField).at(1), 'secret123');
-
-    await tester.tap(find.text('Create Seeker Account'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text(
-        'Admin accounts cannot be created here. Use an existing admin account to sign in.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('Create Provider Account'), findsOneWidget);
   });
 
   testWidgets('forgot password dialog validates and sends email', (

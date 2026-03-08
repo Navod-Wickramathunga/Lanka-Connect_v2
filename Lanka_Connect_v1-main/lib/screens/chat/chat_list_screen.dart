@@ -9,6 +9,7 @@ import '../../ui/web/web_page_scaffold.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/user_roles.dart';
 import 'chat_screen.dart';
+import '../../widgets/shimmer_loading.dart';
 
 class ChatListScreen extends StatelessWidget {
   const ChatListScreen({super.key});
@@ -50,7 +51,7 @@ class ChatListScreen extends StatelessWidget {
           stream: query.snapshots(),
           builder: (context, bookingSnapshot) {
             if (bookingSnapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+              return const ShimmerCardList(itemCount: 4);
             }
             if (bookingSnapshot.hasError) {
               return Center(
@@ -68,6 +69,8 @@ class ChatListScreen extends StatelessWidget {
                   body: const MobileEmptyState(
                     title: 'No chats yet.',
                     icon: Icons.chat_bubble_outline,
+                    subtitle:
+                        'Conversations with seekers and providers\nwill show up once a booking is active.',
                   ),
                 );
               }

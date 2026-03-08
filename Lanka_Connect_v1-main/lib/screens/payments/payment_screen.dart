@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
@@ -10,10 +11,51 @@ import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
-import '../../utils/offer_service.dart';
 import '../../utils/validators.dart';
 
 enum _PaymentMethod { card, savedCard, bankTransfer }
+
+class _CardNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.length > 16) return oldValue;
+    final buffer = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i > 0 && i % 4 == 0) buffer.write(' ');
+      buffer.write(digits[i]);
+    }
+    final formatted = buffer.toString();
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+
+class _ExpiryFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.length > 4) return oldValue;
+    final buffer = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i == 2) buffer.write('/');
+      buffer.write(digits[i]);
+    }
+    final formatted = buffer.toString();
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
 
 class PaymentScreen extends StatefulWidget {
   const PaymentScreen({super.key, required this.bookingId});
@@ -42,13 +84,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
   final _transferAmountController = TextEditingController();
 
   bool _saving = false;
-  bool _loadingOffer = true;
   bool _saveCardForFuture = false;
   DateTime? _transferPaidAt;
   String? _selectedSavedMethodId;
   String? _selectedBankAccountId;
   _PaymentMethod _selectedMethod = _PaymentMethod.card;
-  Map<String, dynamic>? _offerSummary;
 
   @override
   void dispose() {
@@ -65,91 +105,24 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   String _shortId(String id) => id.length > 6 ? id.substring(0, 6) : id;
 
-  Future<Map<String, dynamic>?> _resolveOfferSummary(
-    Map<String, dynamic> booking,
-  ) async {
-    try {
-      final serviceId = (booking['serviceId'] ?? '').toString();
-      final providerId = (booking['providerId'] ?? '').toString();
-      final grossAmount = (booking['amount'] is num)
-          ? (booking['amount'] as num).toDouble()
-          : 0.0;
-      String category = '';
-      if (serviceId.isNotEmpty) {
-        final serviceDoc = await FirestoreRefs.services().doc(serviceId).get();
-        category = (serviceDoc.data()?['category'] ?? '').toString();
-      }
-      final offers = await OfferService.loadActiveOffers();
-      final applied = OfferService.resolveBestOffer(
-        offers: offers,
-        grossAmount: grossAmount,
-        serviceId: serviceId,
-        providerId: providerId,
-        category: category,
-      );
-      if (applied == null) {
-        return {
-          'grossAmount': grossAmount,
-          'discountAmount': 0.0,
-          'netAmount': grossAmount,
-        };
-      }
-      return {
-        'grossAmount': applied.grossAmount,
-        'discountAmount': applied.discountAmount,
-        'netAmount': applied.netAmount,
-        'appliedOfferId': applied.offerId,
-        'discountMeta': applied.meta,
-      };
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<bool> _ensureOfferSummaryOnBooking(Map<String, dynamic> booking) async {
-    final fallbackAmount = (booking['amount'] is num)
-        ? (booking['amount'] as num).toDouble()
-        : 0.0;
-    final summary = _offerSummary ??
-        await _resolveOfferSummary(booking) ??
-        <String, dynamic>{
-          'grossAmount': fallbackAmount,
-          'discountAmount': 0.0,
-          'netAmount': fallbackAmount,
-        };
-    try {
-      await FirestoreRefs.bookings().doc(widget.bookingId).set({
-        'grossAmount': summary['grossAmount'] ?? fallbackAmount,
-        'discountAmount': summary['discountAmount'] ?? 0.0,
-        'netAmount': summary['netAmount'] ?? fallbackAmount,
-        'appliedOfferId': summary['appliedOfferId'] ?? '',
-        'discountMeta': summary['discountMeta'] ?? <String, dynamic>{},
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      if (mounted) {
-        setState(() {
-          _offerSummary = summary;
-        });
-      }
-      return true;
-    } catch (e) {
-      if (mounted) {
-        FirestoreErrorHandler.showError(
-          context,
-          'Could not apply the selected discount. Please try again.',
-        );
-      }
-      return false;
-    }
-  }
-
   double _resolveNetAmount(Map<String, dynamic> booking) {
     final fallback = (booking['amount'] is num)
         ? (booking['amount'] as num).toDouble()
         : 0.0;
-    final net = _offerSummary?['netAmount'];
+    final net = booking['netAmount'];
     return net is num ? net.toDouble() : fallback;
   }
+
+  bool _isPaymentFinalStatus(String status) =>
+      status == 'paid' || status == 'success';
+
+  bool _isPaymentPendingStatus(String status) =>
+      status == 'initiated' ||
+      status == 'pending_gateway' ||
+      status == 'pending_verification';
+
+  bool _canStartNewPayment(String status) =>
+      !_isPaymentFinalStatus(status) && !_isPaymentPendingStatus(status);
 
   Future<void> _launchCheckout(String checkoutUrl) async {
     final uri = Uri.tryParse(checkoutUrl);
@@ -166,15 +139,22 @@ class _PaymentScreenState extends State<PaymentScreen> {
       FirestoreErrorHandler.showSignInRequired(context);
       return;
     }
+    final paymentStatus = (booking['paymentStatus'] ?? '').toString();
+    if (!_canStartNewPayment(paymentStatus)) {
+      FirestoreErrorHandler.showError(
+        context,
+        _isPaymentFinalStatus(paymentStatus)
+            ? 'This booking is already paid.'
+            : 'A payment attempt is already in progress. Please wait.',
+      );
+      return;
+    }
 
     final email = _emailController.text.trim().isNotEmpty
         ? _emailController.text.trim()
         : (user.email ?? '').trim();
     final phoneRaw = _phoneController.text.trim();
     final phone = Validators.normalizePhoneToE164(phoneRaw);
-
-    final synced = await _ensureOfferSummaryOnBooking(booking);
-    if (!synced) return;
 
     setState(() => _saving = true);
     try {
@@ -220,6 +200,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
       FirestoreErrorHandler.showSignInRequired(context);
       return;
     }
+    final paymentStatus = (booking['paymentStatus'] ?? '').toString();
+    if (!_canStartNewPayment(paymentStatus)) {
+      FirestoreErrorHandler.showError(
+        context,
+        _isPaymentFinalStatus(paymentStatus)
+            ? 'This booking is already paid.'
+            : 'A payment attempt is already in progress. Please wait.',
+      );
+      return;
+    }
     final bankForm = _bankFormKey.currentState;
     if (bankForm == null || !bankForm.validate()) return;
     if (_selectedBankAccountId == null || _selectedBankAccountId!.isEmpty) {
@@ -227,8 +217,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       return;
     }
 
-    final synced = await _ensureOfferSummaryOnBooking(booking);
-    if (!synced) return;
+    if (!mounted) return;
 
     final netAmount = _resolveNetAmount(booking);
     final paidAmount = double.tryParse(_transferAmountController.text.trim());
@@ -284,30 +273,20 @@ class _PaymentScreenState extends State<PaymentScreen> {
           children: [
             Text('Booking: ${_shortId(widget.bookingId)}'),
             const SizedBox(height: 6),
-            Text(
-              'Gross amount: LKR ${(_offerSummary?['grossAmount'] ?? booking['amount'] ?? 0)}',
-            ),
-            const SizedBox(height: 6),
-            Text('Discount: LKR ${(_offerSummary?['discountAmount'] ?? 0)}'),
-            const SizedBox(height: 6),
-            Text(
-              'Payable amount: LKR ${(_offerSummary?['netAmount'] ?? booking['amount'] ?? 0)}',
-            ),
-            if ((_offerSummary?['appliedOfferId'] ?? '').toString().isNotEmpty)
+            Text('Amount: LKR ${booking['amount'] ?? 0}'),
+            if ((booking['discountAmount'] is num) &&
+                (booking['discountAmount'] as num) > 0) ...[
+              const SizedBox(height: 6),
+              Text('Discount: LKR ${booking['discountAmount']}'),
+              const SizedBox(height: 6),
+              Text(
+                'Payable: LKR ${booking['netAmount'] ?? booking['amount'] ?? 0}',
+              ),
+            ],
+            if ((booking['appliedOfferId'] ?? '').toString().isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  'Applied offer: ${_offerSummary?['appliedOfferId']}',
-                ),
-              ),
-            if ((_offerSummary?['discountMeta']?['title'] ?? '')
-                .toString()
-                .isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  'Offer title: ${_offerSummary?['discountMeta']?['title']}',
-                ),
+                child: Text('Applied offer: ${booking['appliedOfferId']}'),
               ),
           ],
         ),
@@ -359,6 +338,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
+  Widget _buildMethodSection(Map<String, dynamic> booking, String uid) {
+    switch (_selectedMethod) {
+      case _PaymentMethod.card:
+        return _buildCardSection(booking);
+      case _PaymentMethod.savedCard:
+        return _buildSavedCardSection(booking, uid);
+      case _PaymentMethod.bankTransfer:
+        return _buildBankTransferSection(booking);
+    }
+  }
+
   Widget _buildCardSection(Map<String, dynamic> booking) {
     return Card(
       child: Padding(
@@ -377,6 +367,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 controller: _cardNumberController,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'Card number'),
+                inputFormatters: [_CardNumberFormatter()],
                 validator: Validators.cardNumberField,
               ),
               const SizedBox(height: 10),
@@ -389,6 +380,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       decoration: const InputDecoration(
                         labelText: 'Expiry MM/YY',
                       ),
+                      inputFormatters: [_ExpiryFormatter()],
                       validator: Validators.expiryField,
                     ),
                   ),
@@ -399,6 +391,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       keyboardType: TextInputType.number,
                       obscureText: true,
                       decoration: const InputDecoration(labelText: 'CVV'),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(4),
+                      ],
                       validator: Validators.cvvField,
                     ),
                   ),
@@ -473,8 +469,27 @@ class _PaymentScreenState extends State<PaymentScreen> {
             }
             final docs = snapshot.data?.docs ?? const [];
             if (docs.isEmpty) {
-              return const Text(
-                'No saved cards found. Add one using Card method.',
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.credit_card_off_outlined),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text('No saved cards found for this account.'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() => _selectedMethod = _PaymentMethod.card);
+                    },
+                    icon: const Icon(Icons.credit_card),
+                    label: const Text('Use Card Payment'),
+                  ),
+                ],
               );
             }
             if (_selectedSavedMethodId == null ||
@@ -499,12 +514,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       final data = doc.data();
                       final brand = (data['brand'] ?? 'Card').toString();
                       final last4 = (data['last4'] ?? '****').toString();
-                      final expiryMonth =
-                          (data['expiryMonth'] ?? '').toString();
-                      final expiryYear =
-                          (data['expiryYear'] ?? '').toString();
+                      final expiryMonth = (data['expiryMonth'] ?? '')
+                          .toString();
+                      final expiryYear = (data['expiryYear'] ?? '').toString();
                       return RadioListTile<String>(
-                        title: Text('$brand •••• $last4'),
+                        title: Text('$brand **** $last4'),
                         subtitle: Text('Exp: $expiryMonth/$expiryYear'),
                         value: doc.id,
                       );
@@ -566,7 +580,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   }
                   final accounts = snapshot.data?.docs ?? const [];
                   if (accounts.isEmpty) {
-                    return const Text('No active bank account from provider.');
+                    return const Row(
+                      children: [
+                        Icon(Icons.account_balance_wallet_outlined),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Provider has not added an active bank account yet.',
+                          ),
+                        ),
+                      ],
+                    );
                   }
                   if (_selectedBankAccountId == null ||
                       _selectedBankAccountId!.isEmpty) {
@@ -580,17 +604,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     child: Column(
                       children: accounts.map((doc) {
                         final data = doc.data();
-                        final bankName =
-                            (data['bankName'] ?? '').toString();
-                        final accountName =
-                            (data['accountName'] ?? '').toString();
-                        final masked =
-                            (data['accountNumberMasked'] ?? '').toString();
-                        final branch =
-                            (data['branch'] ?? '').toString();
+                        final bankName = (data['bankName'] ?? '').toString();
+                        final accountName = (data['accountName'] ?? '')
+                            .toString();
+                        final masked = (data['accountNumberMasked'] ?? '')
+                            .toString();
+                        final branch = (data['branch'] ?? '').toString();
                         return RadioListTile<String>(
                           value: doc.id,
-                          title: Text('$bankName • $masked'),
+                          title: Text('$bankName \u2022 $masked'),
                           subtitle: Text('$accountName | $branch'),
                         );
                       }).toList(),
@@ -700,6 +722,119 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
+  /// Shows a collapsible list of all past payment attempts for this booking.
+  Widget _buildPaymentHistory(String bookingId) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirestoreRefs.payments()
+          .where('bookingId', isEqualTo: bookingId)
+          .orderBy('createdAt', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final docs = snapshot.data!.docs;
+        return ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          title: Text(
+            'Payment History (${docs.length})',
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          ),
+          children: docs.map((doc) {
+            final d = doc.data();
+            final status = (d['status'] ?? '').toString();
+            final method = (d['method'] ?? '').toString();
+            final amount = (d['amount'] is num)
+                ? (d['amount'] as num).toDouble()
+                : 0.0;
+            final ts = d['createdAt'] as Timestamp?;
+            final date = ts != null
+                ? DateFormat('dd MMM yyyy, hh:mm a').format(ts.toDate())
+                : 'N/A';
+            final isOk = status == 'success' || status == 'paid';
+            final isPend =
+                status == 'pending_verification' || status == 'pending_gateway';
+            final color = isOk
+                ? Colors.green
+                : isPend
+                ? Colors.orange
+                : Colors.red;
+            return ListTile(
+              dense: true,
+              leading: Icon(
+                isOk
+                    ? Icons.check_circle_outline
+                    : isPend
+                    ? Icons.pending_outlined
+                    : Icons.cancel_outlined,
+                color: color,
+                size: 20,
+              ),
+              title: Text(
+                'Rs ${amount.toStringAsFixed(2)} \u2022 ${method.isNotEmpty ? method : 'card'}',
+                style: const TextStyle(fontSize: 13),
+              ),
+              subtitle: Text(date, style: const TextStyle(fontSize: 11)),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  status.replaceAll('_', ' '),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildBookingPaymentBanner(String paymentStatus) {
+    if (paymentStatus.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final isFinal = _isPaymentFinalStatus(paymentStatus);
+    final isPending = _isPaymentPendingStatus(paymentStatus);
+    final color = isFinal
+        ? Colors.green
+        : isPending
+        ? Colors.orange
+        : Colors.red;
+    final icon = isFinal
+        ? Icons.check_circle
+        : isPending
+        ? Icons.pending
+        : Icons.error_outline;
+    final message = isFinal
+        ? 'This booking is already paid.'
+        : isPending
+        ? 'Payment is currently in progress. You can check back in a moment.'
+        : 'Previous payment failed. You can try another payment method.';
+
+    return Card(
+      color: color.withValues(alpha: 0.08),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -738,24 +873,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
           return const Center(child: Text('Booking not found.'));
         }
 
-        if (_loadingOffer) {
-          WidgetsBinding.instance.addPostFrameCallback((_) async {
-            final summary = await _resolveOfferSummary(booking);
-            if (!mounted) return;
-            setState(() {
-              _offerSummary = summary;
-              _loadingOffer = false;
-            });
-          });
-        }
-
         final status = (booking['status'] ?? '').toString();
+        final paymentStatus = (booking['paymentStatus'] ?? '').toString();
         final isSeeker = (booking['seekerId'] ?? '').toString() == user.uid;
         if (!isSeeker) {
           return const Center(child: Text('Only seeker can make payment.'));
         }
 
-        if (status != 'accepted') {
+        if (status != 'accepted' &&
+            !_isPaymentFinalStatus(paymentStatus) &&
+            !_isPaymentPendingStatus(paymentStatus)) {
           return const Center(
             child: Text('Payment is enabled only when booking is accepted.'),
           );
@@ -771,19 +898,29 @@ class _PaymentScreenState extends State<PaymentScreen> {
           );
         }
 
+        final actionsLocked = !_canStartNewPayment(paymentStatus);
         final sections = <Widget>[
           _buildAmountCard(booking),
           const SizedBox(height: 12),
+          _buildBookingPaymentBanner(paymentStatus),
+          if (paymentStatus.isNotEmpty) const SizedBox(height: 12),
           _buildLatestPaymentStatus(widget.bookingId),
           const SizedBox(height: 12),
-          _buildMethodPicker(),
+          _buildPaymentHistory(widget.bookingId),
           const SizedBox(height: 12),
-          if (_selectedMethod == _PaymentMethod.card)
-            _buildCardSection(booking),
-          if (_selectedMethod == _PaymentMethod.savedCard)
-            _buildSavedCardSection(booking, user.uid),
-          if (_selectedMethod == _PaymentMethod.bankTransfer)
-            _buildBankTransferSection(booking),
+          if (!actionsLocked) ...[
+            _buildMethodPicker(),
+            const SizedBox(height: 12),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: KeyedSubtree(
+                key: ValueKey<String>(_selectedMethod.name),
+                child: _buildMethodSection(booking, user.uid),
+              ),
+            ),
+          ],
         ];
 
         return SingleChildScrollView(

@@ -1,11 +1,12 @@
-# System Architecture Diagram
+# System Architecture
 
 ## Overview
 
-Lanka Connect is a Flutter client application that uses Firebase services directly.  
-For Spark/free demo mode, business side-effects are executed in-app through Firestore transactions/writes.
+Lanka Connect uses a Flutter client (Android/iOS/Web) with Firebase-managed backend services.
+Core CRUD operations run directly against Firestore, while payment and notification-sensitive
+operations are delegated to Cloud Functions.
 
-## Diagram (Spark-Compatible Runtime)
+## Architecture Diagram (Current Runtime)
 
 ```mermaid
 flowchart TB
@@ -14,18 +15,22 @@ flowchart TB
     A --> AUTH[Firebase Auth]
     A --> FS[Cloud Firestore]
     A --> ST[Firebase Storage]
+    A --> CF[Cloud Functions Callable / HTTP]
 
     subgraph AppDomain[Flutter App Domain Layers]
       UI[Screens + Widgets]
-      UTIL[Services / Utils<br/>DemoDataService<br/>ReviewService<br/>ServiceModerationService]
+      UTIL[Services + Utils]
       UI --> UTIL
     end
 
     A --> AppDomain
     UTIL --> FS
-    UI --> FS
-    UI --> ST
+    UTIL --> CF
     UI --> AUTH
+    UI --> ST
+
+    CF --> FS
+    CF --> EXT[External Providers<br/>PayHere / Twilio / SendGrid]
 
     subgraph DataCollections[Firestore Collections]
       USERS[users]
@@ -35,18 +40,40 @@ flowchart TB
       MESSAGES[messages]
       NOTIFS[notifications]
       PAYMENTS[payments]
+      RECEIPTS[paymentReceipts]
+      BANK[providerBankAccounts]
     end
 
     FS --> DataCollections
 ```
 
-## Key Runtime Responsibilities
+## Responsibility Allocation
 
-- Authentication and role identity: Firebase Auth + `users/{uid}.role`.
-- Data persistence and querying: Firestore collections.
-- Profile images: Firebase Storage.
-- Side effects (Spark mode, in-app):
-  - Service post defaults to `pending`.
-  - Admin approval writes moderation notification.
-  - Review submission updates provider aggregate rating fields.
-  - Admin demo data seeding performed in app code.
+- Client-side responsibilities:
+  - Authentication and role-gated navigation.
+  - Service discovery, booking lifecycle UI, chat UI, review submission UI.
+  - Payment method selection and checkout/transfer submission initiation.
+- Backend (Cloud Functions) responsibilities:
+  - Payment session creation (`createPayHereCheckoutSession`).
+  - Bank transfer intake and admin verification (`submitBankTransfer`, `verifyBankTransfer`).
+  - Gateway callback verification (`payHereWebhook`).
+  - Payment receipt dispatch (SMS and email) with delivery logs.
+- Data layer responsibilities:
+  - Firestore as source of truth for bookings, payments, and moderation data.
+  - Storage for media assets.
+  - Firestore rules for role-based access controls.
+
+## Security Boundaries
+
+- User identity is resolved by Firebase Auth token (`request.auth.uid`).
+- Cloud Functions enforce server-side checks for payment ownership and status transitions.
+- Admin-only operations validate role from `users/{uid}.role`.
+- Webhook processing validates PayHere signature before mutating payment state.
+
+## Payment Data Flow Summary
+
+1. Seeker starts payment from booking (`status=accepted`).
+2. Callable function creates a payment attempt and updates booking payment state.
+3. User completes gateway checkout or submits transfer reference.
+4. Webhook/admin verification finalizes payment state.
+5. Booking is updated with paid/failed status, and receipt delivery is attempted.

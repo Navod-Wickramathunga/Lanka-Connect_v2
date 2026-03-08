@@ -85,6 +85,8 @@ class NotificationsScreen extends StatelessWidget {
               return const MobileEmptyState(
                 title: 'No notifications yet.',
                 icon: Icons.notifications_none,
+                subtitle:
+                    'You\u2019ll be notified about bookings,\nmessages, and important updates here.',
               );
             }
 
@@ -103,10 +105,7 @@ class NotificationsScreen extends StatelessWidget {
                     isRead ? Icons.notifications_none : Icons.notifications,
                     color: isRead ? scheme.onSurfaceVariant : scheme.primary,
                   ),
-                  title: Text(
-                    title,
-                    style: TextStyle(color: scheme.onSurface),
-                  ),
+                  title: Text(title, style: TextStyle(color: scheme.onSurface)),
                   subtitle: Text(
                     body,
                     style: TextStyle(color: scheme.onSurfaceVariant),

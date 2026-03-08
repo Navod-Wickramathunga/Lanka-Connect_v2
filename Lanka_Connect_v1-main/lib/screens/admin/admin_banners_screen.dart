@@ -1,12 +1,19 @@
+﻿import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
+import 'package:mime/mime.dart';
 
 import '../../ui/theme/design_tokens.dart';
 import '../../utils/firestore_refs.dart';
 
 /// Admin panel for managing homepage banners.
 /// Banners are stored in the `banners` Firestore collection with fields:
-///   title, subtitle, ctaText, colorHex, imageUrl, active, order, createdAt
+///   title, subtitle, ctaText, colorHex, imageUrl, active, order,
+///   scheduledStart, scheduledEnd, createdAt
 class AdminBannersPanel extends StatefulWidget {
   const AdminBannersPanel({super.key});
 
@@ -17,7 +24,7 @@ class AdminBannersPanel extends StatefulWidget {
 class _AdminBannersPanelState extends State<AdminBannersPanel> {
   String _search = '';
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Color _colorFromHex(String hex) {
     try {
@@ -32,7 +39,48 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
     return '#${c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
   }
 
-  // ── CRUD ─────────────────────────────────────────────────────────────────
+  // â”€â”€ Image upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  Future<String?> _uploadBannerImage(XFile picked) async {
+    final bytes = await picked.readAsBytes();
+    if (bytes.length > 5 * 1024 * 1024) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Image must be under 5 MB.')),
+        );
+      }
+      return null;
+    }
+
+    final mimeType = lookupMimeType(
+      picked.name,
+      headerBytes: bytes.take(12).toList(),
+    );
+    if (mimeType == null || !mimeType.startsWith('image/')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a valid image file.')),
+        );
+      }
+      return null;
+    }
+
+    final ext = picked.name.split('.').last;
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('banner_images')
+        .child('${DateTime.now().millisecondsSinceEpoch}.$ext');
+
+    final metadata = SettableMetadata(contentType: mimeType);
+    if (kIsWeb) {
+      await ref.putData(bytes, metadata);
+    } else {
+      await ref.putFile(File(picked.path), metadata);
+    }
+    return ref.getDownloadURL();
+  }
+
+  // â”€â”€ CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _showBannerDialog({
     String? docId,
@@ -43,7 +91,6 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
       text: existing?['subtitle'] ?? '',
     );
     final ctaCtrl = TextEditingController(text: existing?['ctaText'] ?? '');
-    final imageCtrl = TextEditingController(text: existing?['imageUrl'] ?? '');
     final orderCtrl = TextEditingController(
       text: (existing?['order'] ?? 0).toString(),
     );
@@ -51,18 +98,82 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
         ? _colorFromHex(existing['colorHex'] ?? '#2563EB')
         : const Color(0xFF2563EB);
     bool active = existing?['active'] ?? true;
+    String imageUrl = existing?['imageUrl'] ?? '';
+    bool uploading = false;
+
+    // Scheduling
+    DateTime? scheduledStart;
+    DateTime? scheduledEnd;
+    if (existing?['scheduledStart'] != null) {
+      scheduledStart = (existing!['scheduledStart'] as Timestamp).toDate();
+    }
+    if (existing?['scheduledEnd'] != null) {
+      scheduledEnd = (existing!['scheduledEnd'] as Timestamp).toDate();
+    }
 
     final isEdit = docId != null;
+    final dateFmt = DateFormat('yyyy-MM-dd HH:mm');
 
     final saved = await showDialog<bool>(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
+            Future<void> pickImage() async {
+              final picker = ImagePicker();
+              final picked = await picker.pickImage(
+                source: ImageSource.gallery,
+                maxWidth: 1200,
+                maxHeight: 600,
+                imageQuality: 85,
+              );
+              if (picked == null) return;
+              setDialogState(() => uploading = true);
+              try {
+                final url = await _uploadBannerImage(picked);
+                if (url != null) {
+                  setDialogState(() => imageUrl = url);
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('Upload failed: $e')));
+                }
+              } finally {
+                setDialogState(() => uploading = false);
+              }
+            }
+
+            Future<DateTime?> pickDateTime(DateTime? initial) async {
+              final date = await showDatePicker(
+                context: ctx,
+                initialDate: initial ?? DateTime.now(),
+                firstDate: DateTime(2024),
+                lastDate: DateTime(2030),
+              );
+              if (date == null) return null;
+              if (!ctx.mounted) return null;
+              final time = await showTimePicker(
+                context: ctx,
+                initialTime: initial != null
+                    ? TimeOfDay.fromDateTime(initial)
+                    : TimeOfDay.now(),
+              );
+              if (time == null) return null;
+              return DateTime(
+                date.year,
+                date.month,
+                date.day,
+                time.hour,
+                time.minute,
+              );
+            }
+
             return AlertDialog(
               title: Text(isEdit ? 'Edit Banner' : 'New Banner'),
               content: SizedBox(
-                width: 480,
+                width: 520,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -92,14 +203,111 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      TextField(
-                        controller: imageCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Image URL (optional)',
-                          hintText: 'https://...',
+
+                      // â”€â”€ Image upload â”€â”€
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Banner Image:',
+                          style: Theme.of(ctx).textTheme.bodySmall,
                         ),
                       ),
+                      const SizedBox(height: 6),
+                      if (imageUrl.isNotEmpty)
+                        Stack(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(
+                                imageUrl,
+                                height: 120,
+                                width: double.infinity,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, e, st) => Container(
+                                  height: 120,
+                                  color: Colors.grey[200],
+                                  child: const Center(
+                                    child: Icon(Icons.broken_image),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: IconButton.filled(
+                                onPressed: () =>
+                                    setDialogState(() => imageUrl = ''),
+                                icon: const Icon(Icons.close, size: 16),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: Colors.black54,
+                                  foregroundColor: Colors.white,
+                                  minimumSize: const Size(28, 28),
+                                  padding: EdgeInsets.zero,
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      else
+                        InkWell(
+                          onTap: uploading ? null : pickImage,
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            height: 100,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: Theme.of(ctx).colorScheme.outlineVariant,
+                                style: BorderStyle.solid,
+                              ),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: uploading
+                                ? const Center(
+                                    child: SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  )
+                                : Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.cloud_upload_outlined,
+                                        size: 32,
+                                        color: Theme.of(
+                                          ctx,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Click to upload image',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Theme.of(
+                                            ctx,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                        ),
+                      if (imageUrl.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: OutlinedButton.icon(
+                            onPressed: uploading ? null : pickImage,
+                            icon: const Icon(Icons.swap_horiz, size: 16),
+                            label: const Text('Replace Image'),
+                          ),
+                        ),
                       const SizedBox(height: 12),
+
                       TextField(
                         controller: orderCtrl,
                         decoration: const InputDecoration(
@@ -109,6 +317,76 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
                         keyboardType: TextInputType.number,
                       ),
                       const SizedBox(height: 16),
+
+                      // â”€â”€ Scheduling â”€â”€
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Schedule (optional):',
+                          style: Theme.of(ctx).textTheme.bodySmall,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                final picked = await pickDateTime(
+                                  scheduledStart,
+                                );
+                                if (picked != null) {
+                                  setDialogState(() => scheduledStart = picked);
+                                }
+                              },
+                              icon: const Icon(Icons.play_arrow, size: 16),
+                              label: Text(
+                                scheduledStart != null
+                                    ? dateFmt.format(scheduledStart!)
+                                    : 'Start Date',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                final picked = await pickDateTime(scheduledEnd);
+                                if (picked != null) {
+                                  setDialogState(() => scheduledEnd = picked);
+                                }
+                              },
+                              icon: const Icon(Icons.stop, size: 16),
+                              label: Text(
+                                scheduledEnd != null
+                                    ? dateFmt.format(scheduledEnd!)
+                                    : 'End Date',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (scheduledStart != null || scheduledEnd != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: () => setDialogState(() {
+                                scheduledStart = null;
+                                scheduledEnd = null;
+                              }),
+                              child: const Text(
+                                'Clear schedule',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 16),
+
                       // Color picker row
                       Row(
                         children: [
@@ -172,6 +450,16 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
                               selectedColor.withValues(alpha: 0.7),
                             ],
                           ),
+                          image: imageUrl.isNotEmpty
+                              ? DecorationImage(
+                                  image: NetworkImage(imageUrl),
+                                  fit: BoxFit.cover,
+                                  colorFilter: ColorFilter.mode(
+                                    selectedColor.withValues(alpha: 0.55),
+                                    BlendMode.darken,
+                                  ),
+                                )
+                              : null,
                         ),
                         padding: const EdgeInsets.all(16),
                         child: Column(
@@ -232,16 +520,22 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
       return;
     }
 
-    final data = {
+    final data = <String, dynamic>{
       'title': titleCtrl.text.trim(),
       'subtitle': subtitleCtrl.text.trim(),
       'ctaText': ctaCtrl.text.trim().isEmpty
           ? 'Learn More'
           : ctaCtrl.text.trim(),
-      'imageUrl': imageCtrl.text.trim(),
+      'imageUrl': imageUrl,
       'colorHex': _colorToHex(selectedColor),
       'active': active,
       'order': int.tryParse(orderCtrl.text) ?? 0,
+      'scheduledStart': scheduledStart != null
+          ? Timestamp.fromDate(scheduledStart!)
+          : null,
+      'scheduledEnd': scheduledEnd != null
+          ? Timestamp.fromDate(scheduledEnd!)
+          : null,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -289,7 +583,21 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
     await FirestoreRefs.banners().doc(docId).update({'active': !current});
   }
 
-  // ── Build ────────────────────────────────────────────────────────────────
+  // â”€â”€ Build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  String _scheduleLabel(Map<String, dynamic> data) {
+    final start = data['scheduledStart'];
+    final end = data['scheduledEnd'];
+    if (start == null && end == null) return '';
+    final fmt = DateFormat('MMM d');
+    if (start != null && end != null) {
+      return '${fmt.format((start as Timestamp).toDate())} â€“ ${fmt.format((end as Timestamp).toDate())}';
+    }
+    if (start != null) {
+      return 'From ${fmt.format((start as Timestamp).toDate())}';
+    }
+    return 'Until ${fmt.format((end as Timestamp).toDate())}';
+  }
 
   static const _presetColors = [
     Color(0xFF2563EB),
@@ -327,7 +635,7 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
                 child: TextField(
                   onChanged: (v) => setState(() => _search = v),
                   decoration: InputDecoration(
-                    hintText: 'Search banners…',
+                    hintText: 'Search bannersâ€¦',
                     prefixIcon: const Icon(Icons.search, size: 20),
                     isDense: true,
                     contentPadding: const EdgeInsets.symmetric(
@@ -383,7 +691,7 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
                       const SizedBox(height: 12),
                       Text(
                         docs.isEmpty
-                            ? 'No banners yet — create your first one!'
+                            ? 'No banners yet â€” create your first one!'
                             : 'No banners match your search',
                         style: TextStyle(color: scheme.onSurfaceVariant),
                       ),
@@ -425,7 +733,7 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
                               ),
                             ),
                           ),
-                          // Banner preview thumbnail
+                          // Banner preview thumbnail (image or gradient)
                           Container(
                             width: 140,
                             height: 90,
@@ -433,6 +741,17 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
                               gradient: LinearGradient(
                                 colors: [color, color.withValues(alpha: 0.7)],
                               ),
+                              image:
+                                  (data['imageUrl'] ?? '').toString().isNotEmpty
+                                  ? DecorationImage(
+                                      image: NetworkImage(data['imageUrl']),
+                                      fit: BoxFit.cover,
+                                      colorFilter: ColorFilter.mode(
+                                        color.withValues(alpha: 0.45),
+                                        BlendMode.darken,
+                                      ),
+                                    )
+                                  : null,
                             ),
                             padding: const EdgeInsets.all(12),
                             child: Column(
@@ -490,18 +809,24 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   const SizedBox(height: 6),
-                                  Row(
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
                                     children: [
                                       _InfoChip(
                                         label:
                                             'CTA: ${data['ctaText'] ?? 'n/a'}',
                                         icon: Icons.touch_app,
                                       ),
-                                      const SizedBox(width: 8),
                                       _InfoChip(
                                         label: 'Order: ${data['order'] ?? 0}',
                                         icon: Icons.sort,
                                       ),
+                                      if (_scheduleLabel(data).isNotEmpty)
+                                        _InfoChip(
+                                          label: _scheduleLabel(data),
+                                          icon: Icons.schedule,
+                                        ),
                                     ],
                                   ),
                                 ],
@@ -554,7 +879,7 @@ class _AdminBannersPanelState extends State<AdminBannersPanel> {
   }
 }
 
-// ── Reusable info chip ──────────────────────────────────────────────────────
+// â”€â”€ Reusable info chip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _InfoChip extends StatelessWidget {
   const _InfoChip({required this.label, required this.icon});

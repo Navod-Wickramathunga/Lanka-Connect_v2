@@ -14,6 +14,8 @@ import '../../widgets/promotion_section.dart';
 import '../../widgets/service_card_enhanced.dart';
 import '../services/service_detail_screen.dart';
 import '../services/service_list_screen.dart';
+import '../../widgets/shimmer_loading.dart';
+import '../../utils/page_transitions.dart';
 
 /// The enhanced seeker home screen matching the React SeekerHome component.
 /// Combines BannerCarousel + CategoryBar + PromotionSection + Service grid
@@ -308,8 +310,8 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
             stream: _buildServiceQuery().snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const SliverFillRemaining(
-                  child: Center(child: CircularProgressIndicator()),
+                return const SliverToBoxAdapter(
+                  child: ShimmerServiceGrid(itemCount: 6),
                 );
               }
               if (snapshot.hasError) {
@@ -423,7 +425,7 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                       location: _displayLocation(data),
                       distance: _computeDistance(data),
                       onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
+                        SlideUpRoute(
                           builder: (_) =>
                               ServiceDetailScreen(serviceId: docs[index].id),
                         ),

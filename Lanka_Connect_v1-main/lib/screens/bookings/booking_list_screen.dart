@@ -15,6 +15,7 @@ import '../../utils/user_roles.dart';
 import '../chat/chat_screen.dart';
 import '../payments/payment_screen.dart';
 import '../reviews/review_form_screen.dart';
+import '../../widgets/shimmer_loading.dart';
 
 class BookingListScreen extends StatelessWidget {
   const BookingListScreen({super.key});
@@ -97,14 +98,13 @@ class BookingListScreen extends StatelessWidget {
       await NotificationService.createMany(
         recipientIds: [seekerId, providerId],
         title: 'Booking status updated',
-        body:
-            'Booking ${bookingId.substring(0, bookingId.length > 6 ? 6 : bookingId.length)} is now "$status".',
+        body: 'Your booking has been updated to $status.',
         type: 'booking',
         data: {'bookingId': bookingId, 'status': status},
       );
       await NotificationService.notifyAdmins(
         title: 'Booking status changed',
-        body: 'Booking status changed to "$status".',
+        body: 'A booking status was changed to $status.',
         data: {
           'bookingId': bookingId,
           'status': status,
@@ -231,7 +231,8 @@ class BookingListScreen extends StatelessWidget {
         final role = user.isAnonymous
             ? UserRoles.guest
             : UserRoles.normalize(snapshot.data?.data()?['role']);
-        final isSeekerLike = role == UserRoles.seeker || role == UserRoles.guest;
+        final isSeekerLike =
+            role == UserRoles.seeker || role == UserRoles.guest;
 
         Query<Map<String, dynamic>> query = FirestoreRefs.bookings();
         if (role == UserRoles.admin) {
@@ -246,7 +247,7 @@ class BookingListScreen extends StatelessWidget {
           stream: query.snapshots(),
           builder: (context, bookingSnapshot) {
             if (bookingSnapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+              return const ShimmerCardList(itemCount: 5);
             }
             if (bookingSnapshot.hasError) {
               return Center(
@@ -266,6 +267,8 @@ class BookingListScreen extends StatelessWidget {
                   body: const MobileEmptyState(
                     title: 'No bookings yet.',
                     icon: Icons.event_busy,
+                    subtitle:
+                        'When you book a service or receive a request,\nit will appear here.',
                   ),
                 );
               }
@@ -456,8 +459,7 @@ class BookingListScreen extends StatelessWidget {
                                       (data['providerId'] ?? '').toString(),
                                     ),
                                   ),
-                                if (isSeekerLike &&
-                                    status == 'accepted')
+                                if (isSeekerLike && status == 'accepted')
                                   _actionChip(
                                     context: context,
                                     icon: Icons.payment,
@@ -470,8 +472,7 @@ class BookingListScreen extends StatelessWidget {
                                       ),
                                     ),
                                   ),
-                                if ((isSeekerLike &&
-                                        status == 'pending') ||
+                                if ((isSeekerLike && status == 'pending') ||
                                     (role == UserRoles.provider &&
                                         status == 'accepted'))
                                   _actionChip(

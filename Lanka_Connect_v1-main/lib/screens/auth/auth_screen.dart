@@ -174,7 +174,7 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Future<void> _createUserProfile(User? user) async {
+  Future<void> _createUserProfile(User? user, {String? roleOverride}) async {
     if (user == null) return;
 
     final email = user.email ?? _emailController.text.trim();
@@ -186,7 +186,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
     final doc = FirestoreRefs.users().doc(user.uid);
     final data = {
-      'role': _role,
+      'role': roleOverride ?? _role,
       'name': emailName,
       'email': email,
       'contact': '',
@@ -204,6 +204,15 @@ class _AuthScreenState extends State<AuthScreen> {
     if (user == null) return;
 
     final snapshot = await FirestoreRefs.users().doc(user.uid).get();
+
+    // If no Firestore profile exists yet (e.g. user created via Firebase
+    // Console or migrated from another project), auto-create one so the
+    // login succeeds instead of throwing a role-mismatch error.
+    if (!snapshot.exists || snapshot.data() == null) {
+      await _createUserProfile(user, roleOverride: _portalRole);
+      return;
+    }
+
     final profileRole = UserRoles.normalize(snapshot.data()?['role']);
     if (profileRole == _portalRole) {
       return;
@@ -402,19 +411,20 @@ class _AuthScreenState extends State<AuthScreen> {
                 },
           compact: compact,
         ),
-        _PortalChip(
-          label: 'Admin',
-          icon: _roleIcon(UserRoles.admin),
-          selected: _portalRole == UserRoles.admin,
-          onTap: _loading
-              ? null
-              : () {
-                  setState(() {
-                    _portalRole = UserRoles.admin;
-                  });
-                },
-          compact: compact,
-        ),
+        if (_isLogin)
+          _PortalChip(
+            label: 'Admin',
+            icon: _roleIcon(UserRoles.admin),
+            selected: _portalRole == UserRoles.admin,
+            onTap: _loading
+                ? null
+                : () {
+                    setState(() {
+                      _portalRole = UserRoles.admin;
+                    });
+                  },
+            compact: compact,
+          ),
       ],
     );
   }
@@ -490,7 +500,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   Text(
                     _isLogin
                         ? 'Use the correct portal for your account type and continue where your work already lives.'
-                        : 'Create a seeker or provider account. Admin signup stays restricted to existing admin access.',
+                        : 'Create a seeker or provider account to get started.',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: webLayout
                           ? DesignTokens.authWebWarmText
@@ -728,31 +738,29 @@ class _AuthScreenState extends State<AuthScreen> {
     }
 
     return ButtonStyle(
-      padding: const MaterialStatePropertyAll(
-        EdgeInsets.symmetric(vertical: 16),
-      ),
-      backgroundColor: MaterialStateProperty.resolveWith((states) {
-        if (states.contains(MaterialState.disabled)) {
+      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 16)),
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
           return DesignTokens.authWebPrimaryAction.withValues(alpha: 0.45);
         }
-        if (states.contains(MaterialState.pressed)) {
+        if (states.contains(WidgetState.pressed)) {
           return DesignTokens.authWebPrimaryActionPressed;
         }
-        if (states.contains(MaterialState.hovered)) {
+        if (states.contains(WidgetState.hovered)) {
           return DesignTokens.authWebPrimaryActionHover;
         }
         return DesignTokens.authWebPrimaryAction;
       }),
-      foregroundColor: const MaterialStatePropertyAll(Colors.white),
-      elevation: MaterialStateProperty.resolveWith((states) {
-        if (states.contains(MaterialState.disabled)) return 0.0;
-        if (states.contains(MaterialState.hovered)) return 2.0;
+      foregroundColor: const WidgetStatePropertyAll(Colors.white),
+      elevation: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) return 0.0;
+        if (states.contains(WidgetState.hovered)) return 2.0;
         return 0.0;
       }),
-      shape: MaterialStatePropertyAll(
+      shape: WidgetStatePropertyAll(
         RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-      textStyle: const MaterialStatePropertyAll(
+      textStyle: const WidgetStatePropertyAll(
         TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
       ),
     );
@@ -770,25 +778,23 @@ class _AuthScreenState extends State<AuthScreen> {
     }
 
     return ButtonStyle(
-      padding: const MaterialStatePropertyAll(
-        EdgeInsets.symmetric(vertical: 14),
-      ),
-      backgroundColor: MaterialStateProperty.resolveWith((states) {
-        if (states.contains(MaterialState.disabled)) {
+      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 14)),
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
           return DesignTokens.authWebSecondaryActionSurface.withValues(
             alpha: 0.65,
           );
         }
-        if (states.contains(MaterialState.hovered)) {
+        if (states.contains(WidgetState.hovered)) {
           return DesignTokens.authWebSecondaryActionHover;
         }
         return DesignTokens.authWebSecondaryActionSurface;
       }),
-      foregroundColor: const MaterialStatePropertyAll(
+      foregroundColor: const WidgetStatePropertyAll(
         DesignTokens.authWebSecondaryActionText,
       ),
-      elevation: const MaterialStatePropertyAll(0),
-      shape: MaterialStatePropertyAll(
+      elevation: const WidgetStatePropertyAll(0),
+      shape: WidgetStatePropertyAll(
         RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     );
@@ -1239,7 +1245,7 @@ class _PortalRoleMismatch implements Exception {
 
 class _InlineAuthMessage extends StatelessWidget {
   const _InlineAuthMessage({
-    this.key,
+    super.key,
     required this.icon,
     required this.message,
     required this.foreground,
@@ -1247,8 +1253,6 @@ class _InlineAuthMessage extends StatelessWidget {
     required this.borderColor,
   });
 
-  @override
-  final Key? key;
   final IconData icon;
   final String message;
   final Color foreground;

@@ -848,6 +848,47 @@ async function sendPaymentReceipt(input: {
 }
 
 /**
+ * Creates in-app payment notifications for both seeker and provider.
+ * @param {Object} input Notification context.
+ * @return {Promise<void>}
+ */
+async function notifyPaymentParties(input: {
+  bookingId: string;
+  seekerId: string;
+  providerId: string;
+  amount: number;
+  status: "success" | "paid";
+}): Promise<void> {
+  const shortId = input.bookingId.length > 6 ?
+    input.bookingId.substring(0, 6) :
+    input.bookingId;
+  const batch = db.batch();
+  const seekerRef = db.collection("notifications").doc();
+  batch.set(seekerRef, {
+    recipientId: input.seekerId,
+    senderId: "system",
+    title: "Payment successful",
+    body: `Your payment of LKR ${input.amount.toFixed(2)} for booking ${shortId} was successful.`,
+    type: "payment",
+    data: {bookingId: input.bookingId},
+    isRead: false,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  const providerRef = db.collection("notifications").doc();
+  batch.set(providerRef, {
+    recipientId: input.providerId,
+    senderId: "system",
+    title: "Payment received",
+    body: `Payment of LKR ${input.amount.toFixed(2)} received for booking ${shortId}.`,
+    type: "payment",
+    data: {bookingId: input.bookingId},
+    isRead: false,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+/**
  * Loads and validates booking ownership/payment context for the caller.
  * @param {string} bookingId Booking identifier.
  * @param {string} uid Current user ID.
@@ -882,6 +923,23 @@ async function bookingPaymentContext(bookingId: string, uid: string): Promise<{
     throw new HttpsError(
       "failed-precondition",
       "Booking must be accepted before payment.",
+    );
+  }
+  const paymentStatus = (booking.paymentStatus ?? "").toString();
+  if (
+    paymentStatus === "pending_gateway" ||
+    paymentStatus === "pending_verification" ||
+    paymentStatus === "initiated"
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Payment is already in progress for this booking.",
+    );
+  }
+  if (paymentStatus === "paid" || paymentStatus === "success") {
+    throw new HttpsError(
+      "failed-precondition",
+      "This booking is already paid.",
     );
   }
   const amount = Number(booking.netAmount ?? booking.amount ?? 0);
@@ -920,7 +978,7 @@ export const createPayHereCheckoutSession = onCall(async (request) => {
   if (!bookingId) {
     throw new HttpsError("invalid-argument", "bookingId is required.");
   }
-  const {paymentFields} = await bookingPaymentContext(bookingId, uid);
+  const {bookingRef, paymentFields} = await bookingPaymentContext(bookingId, uid);
   const paymentRef = db.collection("payments").doc();
   const paymentMethodId = (data.paymentMethodId ?? "").toString().trim();
   const methodType: PaymentMethodType = paymentMethodId ?
@@ -944,6 +1002,11 @@ export const createPayHereCheckoutSession = onCall(async (request) => {
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
+  await bookingRef.set({
+    paymentStatus: "pending_gateway",
+    paymentAttemptId: attemptId,
+    paymentUpdatedAt: FieldValue.serverTimestamp(),
+  }, {merge: true});
 
   const merchantId = envStrict("PAYHERE_MERCHANT_ID");
   const amountText = paymentFields.netAmount.toFixed(2);
@@ -990,7 +1053,7 @@ export const submitBankTransfer = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Invalid transfer reference format.");
   }
 
-  const {paymentFields} = await bookingPaymentContext(bookingId, uid);
+  const {bookingRef, paymentFields} = await bookingPaymentContext(bookingId, uid);
   const paidAmount = Number(data.paidAmount ?? 0);
   if (
     !Number.isFinite(paidAmount) ||
@@ -1035,6 +1098,11 @@ export const submitBankTransfer = onCall(async (request) => {
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
+  await bookingRef.set({
+    paymentStatus: "pending_verification",
+    paymentAttemptId: paymentRef.id,
+    paymentUpdatedAt: FieldValue.serverTimestamp(),
+  }, {merge: true});
 
   return {
     paymentAttemptId: paymentRef.id,
@@ -1082,6 +1150,11 @@ export const verifyBankTransfer = onCall(async (request) => {
       "Payment is not pending verification.",
     );
   }
+  const bookingId = (payment.bookingId ?? "").toString();
+  if (!bookingId) {
+    throw new HttpsError("failed-precondition", "Payment has no booking reference.");
+  }
+  const bookingRef = db.collection("bookings").doc(bookingId);
 
   const nextStatus: PaymentStatus = approved ? "paid" : "failed";
   await paymentRef.update({
@@ -1095,9 +1168,10 @@ export const verifyBankTransfer = onCall(async (request) => {
   });
 
   if (approved) {
-    const bookingId = (payment.bookingId ?? "").toString();
-    await db.collection("bookings").doc(bookingId).set({
+    await bookingRef.set({
       paymentStatus: "paid",
+      paymentAttemptId,
+      paymentUpdatedAt: FieldValue.serverTimestamp(),
       paidAt: FieldValue.serverTimestamp(),
       grossAmount: Number(payment.grossAmount ?? payment.amount ?? 0),
       discountAmount: Number(payment.discountAmount ?? 0),
@@ -1123,6 +1197,20 @@ export const verifyBankTransfer = onCall(async (request) => {
       },
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    await notifyPaymentParties({
+      bookingId,
+      seekerId: (payment.seekerId ?? "").toString(),
+      providerId: (payment.providerId ?? "").toString(),
+      amount: Number(payment.netAmount ?? payment.amount ?? 0),
+      status: "paid",
+    });
+  } else {
+    await bookingRef.set({
+      paymentStatus: "failed",
+      paymentAttemptId,
+      paymentUpdatedAt: FieldValue.serverTimestamp(),
+    }, {merge: true});
   }
 
   return {status: nextStatus};
@@ -1183,9 +1271,19 @@ export const payHereWebhook = onRequest(async (req, res) => {
       },
       updatedAt: FieldValue.serverTimestamp(),
     });
+    const bookingId = (payment.bookingId ?? "").toString();
+    if (bookingId) {
+      await db.collection("bookings").doc(bookingId).set({
+        paymentStatus: isSuccess ? "paid" : "failed",
+        paymentAttemptId: paymentId,
+        paymentUpdatedAt: FieldValue.serverTimestamp(),
+      }, {merge: true});
+    }
 
     if (isSuccess) {
-      const bookingId = (payment.bookingId ?? "").toString();
+      if (!bookingId) {
+        throw new HttpsError("failed-precondition", "Payment has no booking reference.");
+      }
       await db.collection("bookings").doc(bookingId).set({
         paymentStatus: "paid",
         paidAt: FieldValue.serverTimestamp(),
@@ -1235,6 +1333,14 @@ export const payHereWebhook = onRequest(async (req, res) => {
           sentAt: FieldValue.serverTimestamp(),
         },
         updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      await notifyPaymentParties({
+        bookingId,
+        seekerId: (payment.seekerId ?? "").toString(),
+        providerId: (payment.providerId ?? "").toString(),
+        amount: Number(payment.netAmount ?? payment.amount ?? 0),
+        status: "success",
       });
     }
 

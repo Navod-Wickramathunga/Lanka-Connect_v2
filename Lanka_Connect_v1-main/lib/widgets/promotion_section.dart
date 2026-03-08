@@ -13,6 +13,8 @@ class PromotionData {
     required this.color,
     required this.icon,
     this.linkedCategory,
+    this.scheduledStart,
+    this.scheduledEnd,
   });
   final String title;
   final String description;
@@ -21,6 +23,16 @@ class PromotionData {
   final Color color;
   final IconData icon;
   final String? linkedCategory;
+  final DateTime? scheduledStart;
+  final DateTime? scheduledEnd;
+
+  /// Whether this promotion is currently within its schedule window.
+  bool get isWithinSchedule {
+    final now = DateTime.now();
+    if (scheduledStart != null && now.isBefore(scheduledStart!)) return false;
+    if (scheduledEnd != null && now.isAfter(scheduledEnd!)) return false;
+    return true;
+  }
 
   /// Map of icon names to IconData for Firestore-driven icons.
   static const _iconMap = <String, IconData>{
@@ -59,6 +71,12 @@ class PromotionData {
       color: color,
       icon: _iconMap[iconName] ?? Icons.local_offer,
       linkedCategory: (data['linkedCategory'] ?? '').toString(),
+      scheduledStart: data['scheduledStart'] != null
+          ? (data['scheduledStart'] as Timestamp).toDate()
+          : null,
+      scheduledEnd: data['scheduledEnd'] != null
+          ? (data['scheduledEnd'] as Timestamp).toDate()
+          : null,
     );
   }
 }
@@ -118,6 +136,7 @@ class PromotionSection extends StatelessWidget {
         if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
           promotions = snapshot.data!.docs
               .map((d) => PromotionData.fromMap(d.data()))
+              .where((p) => p.isWithinSchedule)
               .toList();
         } else {
           promotions = _defaultPromotions;

@@ -2,8 +2,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'firestore_refs.dart';
+import '../main.dart';
+import '../screens/bookings/booking_list_screen.dart';
+import '../screens/chat/chat_screen.dart';
+import '../screens/notifications/notifications_screen.dart';
+import '../screens/payments/payment_screen.dart';
 
 /// Handles FCM token lifecycle and push notification setup.
 class FcmService {
@@ -57,6 +63,9 @@ class FcmService {
       if (initialMessage != null) {
         _handleMessageOpenedApp(initialMessage);
       }
+
+      // Remove stale tokens (non-blocking)
+      cleanupStaleTokens();
     } catch (e, st) {
       debugPrint('FCM initialization error: $e');
       debugPrint(st.toString());
@@ -142,16 +151,77 @@ class FcmService {
   /// Handle messages received while the app is in the foreground.
   static void _handleForegroundMessage(RemoteMessage message) {
     debugPrint('FCM foreground message: ${message.notification?.title}');
-    // The foreground message will be handled by the in-app notification
-    // system via Firestore listeners already in place.
-    // This handler is available for future custom UI (e.g., local notifications).
+    // Foreground messages are handled by the in-app Firestore listeners.
+    // Show a brief SnackBar so the user knows a notification arrived.
+    final nav = MyApp.navigatorKey.currentState;
+    final ctx = nav?.context;
+    if (ctx != null && message.notification != null) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(
+          content: Text(message.notification!.title ?? 'New notification'),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'View',
+            onPressed: () => _navigateFromMessage(message.data),
+          ),
+        ),
+      );
+    }
   }
 
   /// Handle when a user taps a notification while app is in background/terminated.
   static void _handleMessageOpenedApp(RemoteMessage message) {
     debugPrint('FCM message opened app: ${message.data}');
-    // Navigation based on message data can be added here.
-    // For now, the app opens to the home screen where users see notifications.
+    _navigateFromMessage(message.data);
+  }
+
+  /// Navigate to the appropriate screen based on notification payload data.
+  static void _navigateFromMessage(Map<String, dynamic> data) {
+    final nav = MyApp.navigatorKey.currentState;
+    if (nav == null) return;
+
+    final type = (data['type'] ?? '').toString();
+    final bookingId = (data['bookingId'] ?? '').toString();
+    final chatId = (data['chatId'] ?? '').toString();
+
+    if (chatId.isNotEmpty) {
+      nav.push(MaterialPageRoute(builder: (_) => ChatScreen(chatId: chatId)));
+    } else if (type == 'payment' && bookingId.isNotEmpty) {
+      nav.push(
+        MaterialPageRoute(builder: (_) => PaymentScreen(bookingId: bookingId)),
+      );
+    } else if (bookingId.isNotEmpty) {
+      nav.push(MaterialPageRoute(builder: (_) => const BookingListScreen()));
+    } else {
+      nav.push(MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+    }
+  }
+
+  /// Clean up stale FCM tokens older than [maxAge] from the user's subcollection.
+  static Future<void> cleanupStaleTokens({
+    Duration maxAge = const Duration(days: 30),
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final cutoff = Timestamp.fromDate(DateTime.now().subtract(maxAge));
+      final stale = await FirestoreRefs.users()
+          .doc(user.uid)
+          .collection('fcm_tokens')
+          .where('updatedAt', isLessThan: cutoff)
+          .get();
+
+      for (final doc in stale.docs) {
+        await doc.reference.delete();
+      }
+
+      if (stale.docs.isNotEmpty) {
+        debugPrint('FCM: Cleaned up ${stale.docs.length} stale token(s).');
+      }
+    } catch (e) {
+      debugPrint('FCM: Failed to cleanup stale tokens: $e');
+    }
   }
 
   static String _currentPlatform() {

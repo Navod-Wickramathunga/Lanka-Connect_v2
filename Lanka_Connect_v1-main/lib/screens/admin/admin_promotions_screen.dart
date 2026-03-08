@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../ui/theme/design_tokens.dart';
 import '../../utils/firestore_refs.dart';
@@ -31,6 +32,17 @@ class _AdminPromotionsPanelState extends State<AdminPromotionsPanel> {
 
   String _colorToHex(Color c) {
     return '#${c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+  }
+
+  String _scheduleLabel(Map<String, dynamic> data) {
+    final fmt = DateFormat('dd MMM HH:mm');
+    final s = data['scheduledStart'];
+    final e = data['scheduledEnd'];
+    final start = s != null ? fmt.format((s as Timestamp).toDate()) : null;
+    final end = e != null ? fmt.format((e as Timestamp).toDate()) : null;
+    if (start != null && end != null) return '$start → $end';
+    if (start != null) return 'From $start';
+    return 'Until $end';
   }
 
   static const _iconOptions = <String, IconData>{
@@ -103,7 +115,18 @@ class _AdminPromotionsPanelState extends State<AdminPromotionsPanel> {
     String linkedCategory = existing?['linkedCategory'] ?? '';
     bool active = existing?['active'] ?? true;
 
+    // Scheduling
+    DateTime? scheduledStart;
+    DateTime? scheduledEnd;
+    if (existing?['scheduledStart'] != null) {
+      scheduledStart = (existing!['scheduledStart'] as Timestamp).toDate();
+    }
+    if (existing?['scheduledEnd'] != null) {
+      scheduledEnd = (existing!['scheduledEnd'] as Timestamp).toDate();
+    }
+
     final isEdit = docId != null;
+    final dateFmt = DateFormat('yyyy-MM-dd HH:mm');
 
     final saved = await showDialog<bool>(
       context: context,
@@ -280,6 +303,112 @@ class _AdminPromotionsPanelState extends State<AdminPromotionsPanel> {
                         ],
                       ),
                       const SizedBox(height: 16),
+
+                      // ── Scheduling ──
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Schedule (optional):',
+                          style: Theme.of(ctx).textTheme.bodySmall,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                final date = await showDatePicker(
+                                  context: ctx,
+                                  initialDate: scheduledStart ?? DateTime.now(),
+                                  firstDate: DateTime(2024),
+                                  lastDate: DateTime(2030),
+                                );
+                                if (date == null || !ctx.mounted) return;
+                                final time = await showTimePicker(
+                                  context: ctx,
+                                  initialTime: scheduledStart != null
+                                      ? TimeOfDay.fromDateTime(scheduledStart!)
+                                      : TimeOfDay.now(),
+                                );
+                                if (time == null) return;
+                                setDialogState(() {
+                                  scheduledStart = DateTime(
+                                    date.year,
+                                    date.month,
+                                    date.day,
+                                    time.hour,
+                                    time.minute,
+                                  );
+                                });
+                              },
+                              icon: const Icon(Icons.play_arrow, size: 16),
+                              label: Text(
+                                scheduledStart != null
+                                    ? dateFmt.format(scheduledStart!)
+                                    : 'Start Date',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                final date = await showDatePicker(
+                                  context: ctx,
+                                  initialDate: scheduledEnd ?? DateTime.now(),
+                                  firstDate: DateTime(2024),
+                                  lastDate: DateTime(2030),
+                                );
+                                if (date == null || !ctx.mounted) return;
+                                final time = await showTimePicker(
+                                  context: ctx,
+                                  initialTime: scheduledEnd != null
+                                      ? TimeOfDay.fromDateTime(scheduledEnd!)
+                                      : TimeOfDay.now(),
+                                );
+                                if (time == null) return;
+                                setDialogState(() {
+                                  scheduledEnd = DateTime(
+                                    date.year,
+                                    date.month,
+                                    date.day,
+                                    time.hour,
+                                    time.minute,
+                                  );
+                                });
+                              },
+                              icon: const Icon(Icons.stop, size: 16),
+                              label: Text(
+                                scheduledEnd != null
+                                    ? dateFmt.format(scheduledEnd!)
+                                    : 'End Date',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (scheduledStart != null || scheduledEnd != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: () => setDialogState(() {
+                                scheduledStart = null;
+                                scheduledEnd = null;
+                              }),
+                              child: const Text(
+                                'Clear schedule',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                      const SizedBox(height: 16),
                       SwitchListTile(
                         title: const Text('Active'),
                         subtitle: const Text(
@@ -410,6 +539,12 @@ class _AdminPromotionsPanelState extends State<AdminPromotionsPanel> {
       'linkedCategory': linkedCategory,
       'active': active,
       'order': int.tryParse(orderCtrl.text) ?? 0,
+      'scheduledStart': scheduledStart != null
+          ? Timestamp.fromDate(scheduledStart!)
+          : null,
+      'scheduledEnd': scheduledEnd != null
+          ? Timestamp.fromDate(scheduledEnd!)
+          : null,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -682,6 +817,31 @@ class _AdminPromotionsPanelState extends State<AdminPromotionsPanel> {
                                       ),
                                     ],
                                   ),
+                                  if (data['scheduledStart'] != null ||
+                                      data['scheduledEnd'] != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            Icons.schedule,
+                                            size: 12,
+                                            color: Colors.deepPurple,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Flexible(
+                                            child: Text(
+                                              _scheduleLabel(data),
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.deepPurple,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),

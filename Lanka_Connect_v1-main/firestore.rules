@@ -358,6 +358,16 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    match /promotions/{promotionId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /offers/{offerId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
