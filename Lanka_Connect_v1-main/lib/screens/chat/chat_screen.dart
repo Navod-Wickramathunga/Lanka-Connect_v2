@@ -8,6 +8,9 @@ import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
+import '../../utils/presence_service.dart';
+import '../../utils/profile_identity.dart';
+import '../../utils/app_feedback.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.chatId});
@@ -27,6 +30,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // Cache for other party info
   String? _otherPartyName;
   String? _serviceTitle;
+  String? _otherPartyId;
 
   String _chatErrorMessage(Object error) {
     if (error is FirebaseException && error.code == 'failed-precondition') {
@@ -54,16 +58,17 @@ class _ChatScreenState extends State<ChatScreen> {
       final seekerId = bookingData['seekerId']?.toString() ?? '';
       final serviceId = bookingData['serviceId']?.toString() ?? '';
       final otherPartyId = user.uid == providerId ? seekerId : providerId;
+      _otherPartyId = otherPartyId;
 
       if (otherPartyId.isNotEmpty) {
         final userDoc = await FirestoreRefs.users().doc(otherPartyId).get();
         final userData = userDoc.data();
         if (userData != null && mounted) {
           setState(() {
-            _otherPartyName =
-                userData['displayName']?.toString() ??
-                userData['name']?.toString() ??
-                'User';
+            _otherPartyName = ProfileIdentity.displayNameFrom(
+              userData,
+              fallback: 'User',
+            );
           });
         }
       }
@@ -109,14 +114,18 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final text = _messageController.text.trim();
     if (text.isEmpty) {
-      ScaffoldMessenger.of(
+      TigerFeedback.show(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Message cannot be empty.')));
+        'Tiger says: type a short message first.',
+        tone: TigerFeedbackTone.warning,
+      );
       return;
     }
     if (text.length > 500) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Message is too long (max 500 chars).')),
+      TigerFeedback.show(
+        context,
+        'Tiger says: keep it under 500 characters.',
+        tone: TigerFeedbackTone.warning,
       );
       return;
     }
@@ -292,26 +301,63 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _otherPartyName ?? 'Chat',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
-                          ),
-                        ),
-                        if (_serviceTitle != null)
-                          Text(
-                            _serviceTitle!,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.8),
-                              fontSize: 12,
+                    child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                      stream: _otherPartyId == null || _otherPartyId!.isEmpty
+                          ? null
+                          : FirestoreRefs.users().doc(_otherPartyId).snapshots(),
+                      builder: (context, presenceSnapshot) {
+                        final presenceData = presenceSnapshot.data?.data();
+                        final resolvedName = ProfileIdentity.displayNameFrom(
+                          presenceData,
+                          fallback: _otherPartyName ?? 'Chat',
+                        );
+                        final online = PresenceService.isOnline(presenceData);
+                        final statusLabel = PresenceService.statusLabel(
+                          presenceData,
+                        );
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              resolvedName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                              ),
                             ),
-                          ),
-                      ],
+                            Row(
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: online
+                                        ? const Color(0xFF22C55E)
+                                        : Colors.white54,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    _serviceTitle == null
+                                        ? statusLabel
+                                        : '${_serviceTitle!} • $statusLabel',
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.8),
+                                      fontSize: 12,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],

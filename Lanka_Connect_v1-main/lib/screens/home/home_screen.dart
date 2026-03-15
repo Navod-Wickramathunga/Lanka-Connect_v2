@@ -8,11 +8,14 @@ import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/theme/app_theme_controller.dart';
 import '../../ui/theme/design_tokens.dart';
 import '../../ui/web/web_shell.dart';
+import '../../utils/app_feedback.dart';
 import '../../utils/demo_data_service.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/firebase_env.dart';
 import '../../utils/notification_service.dart';
+import '../../utils/presence_service.dart';
+import '../../utils/profile_identity.dart';
 import '../../utils/user_roles.dart';
 import '../admin/admin_web_dashboard_screen.dart';
 import '../admin/admin_services_screen.dart';
@@ -34,7 +37,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
   String? _webRouteId;
   bool _seeding = false;
@@ -43,11 +46,39 @@ class _HomeScreenState extends State<HomeScreen> {
   final Set<String> _seenNotificationIds = <String>{};
   String? _notificationKey;
   bool _notificationPrimed = false;
+  String? _presenceUid;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    final presenceUid = _presenceUid;
+    if (presenceUid != null) {
+      unawaited(PresenceService.markOffline(presenceUid));
+    }
     _notificationSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final presenceUid = _presenceUid;
+    if (presenceUid == null) return;
+    if (state == AppLifecycleState.resumed) {
+      unawaited(PresenceService.markOnline(presenceUid));
+      return;
+    }
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(PresenceService.markOffline(presenceUid));
+    }
   }
 
   void _setIndex(int index) {
@@ -60,6 +91,12 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _webRouteId = routeId;
     });
+  }
+
+  void _ensurePresence(String uid) {
+    if (_presenceUid == uid) return;
+    _presenceUid = uid;
+    unawaited(PresenceService.markOnline(uid));
   }
 
   String _roleLabel(String role) {
@@ -290,8 +327,10 @@ class _HomeScreenState extends State<HomeScreen> {
               _seenNotificationIds.add(doc.id);
               final title = (data['title'] ?? 'Notification').toString();
               final body = (data['body'] ?? '').toString();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(body.isEmpty ? title : '$title: $body')),
+              TigerFeedback.show(
+                context,
+                body.isEmpty ? 'Tiger alert: $title' : 'Tiger alert: $body',
+                tone: TigerFeedbackTone.info,
               );
               break;
             }
@@ -309,9 +348,11 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _seeding = true;
     });
-    ScaffoldMessenger.of(
+    TigerFeedback.show(
       context,
-    ).showSnackBar(const SnackBar(content: Text('Seeding demo data...')));
+      'Tiger is preparing demo jobs.',
+      tone: TigerFeedbackTone.info,
+    );
 
     try {
       final result = await DemoDataService.seed();
@@ -320,19 +361,15 @@ class _HomeScreenState extends State<HomeScreen> {
       final updated = (result['updated'] ?? 0).toString();
       final skipped = (result['skipped'] ?? 0).toString();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            ok
-                ? 'Demo data seeded. Created: $created, Updated: $updated, Skipped: $skipped.'
-                : 'Seeder finished with partial result.',
-          ),
-        ),
+      TigerFeedback.show(
+        context,
+        ok
+            ? 'Tiger loaded demo data: $created new, $updated updated, $skipped unchanged.'
+            : 'Tiger loaded part of the demo data.',
+        tone: ok ? TigerFeedbackTone.success : TigerFeedbackTone.warning,
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).clearSnackBars();
       FirestoreErrorHandler.showError(
         context,
         FirestoreErrorHandler.toUserMessageForOperation(
@@ -381,6 +418,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _notificationSubscription?.cancel();
       _notificationSubscription = null;
       _notificationKey = null;
+      final presenceUid = _presenceUid;
+      _presenceUid = null;
+      if (presenceUid != null) {
+        unawaited(PresenceService.markOffline(presenceUid));
+      }
       return const Scaffold(body: Center(child: Text('Not signed in')));
     }
 
@@ -396,6 +438,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final role = user.isAnonymous
             ? UserRoles.guest
             : UserRoles.normalize(data['role']);
+        _ensurePresence(user.uid);
         _ensureNotificationSubscription(user.uid, role);
 
         final mobileRoutes = MobileRoutes.forRole(role);
@@ -473,7 +516,14 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         return Scaffold(
-          drawer: _buildDrawer(context, user, data, role),
+          drawer: _buildDrawer(
+            context,
+            user,
+            data,
+            role,
+            mobileRoutes,
+            selectedIndex,
+          ),
           appBar: AppBar(
             elevation: 0,
             scrolledUnderElevation: 0,
@@ -568,19 +618,14 @@ class _HomeScreenState extends State<HomeScreen> {
               elevation: 0,
               height: 68,
               labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-              destinations: mobileRoutes
-                  .map(
-                    (route) => NavigationDestination(
-                      icon: Icon(route.icon, size: 22),
-                      selectedIcon: Icon(
-                        route.icon,
-                        size: 24,
-                        color: RoleVisuals.forRole(role).accent,
-                      ),
-                      label: route.label,
-                    ),
-                  )
-                  .toList(),
+              destinations: List.generate(mobileRoutes.length, (index) {
+                final route = mobileRoutes[index];
+                return NavigationDestination(
+                  icon: _navIcon(route.icon, active: false, role: role),
+                  selectedIcon: _navIcon(route.icon, active: true, role: role),
+                  label: route.label,
+                );
+              }),
             ),
           ),
         );
@@ -621,8 +666,10 @@ class _HomeScreenState extends State<HomeScreen> {
         );
         break;
       default:
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$value — feature coming soon!')),
+        TigerFeedback.show(
+          context,
+          'Tiger note: $value is coming soon.',
+          tone: TigerFeedbackTone.info,
         );
     }
   }
@@ -644,19 +691,34 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildHelpFab() {
-    return SizedBox(
-      width: 40,
-      height: 40,
-      child: Material(
-        color: Colors.grey.shade800,
-        shape: const CircleBorder(),
-        elevation: 6,
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0.95, end: 1.05),
+      duration: const Duration(milliseconds: 1400),
+      curve: Curves.easeInOut,
+      builder: (context, value, child) {
+        return Transform.scale(scale: value, child: child);
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const LinearGradient(
+            colors: [Color(0xFFF59E0B), Color(0xFFEA580C)],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFEA580C).withValues(alpha: 0.35),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
         child: PopupMenuButton<String>(
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(16),
           ),
           offset: const Offset(0, -320),
-          icon: const Icon(Icons.question_mark, color: Colors.white, size: 18),
+          icon: const Icon(Icons.pets, color: Colors.white, size: 22),
+          tooltip: 'Tiger help',
           onSelected: _handleHelpOption,
           itemBuilder: (context) => [
             const PopupMenuItem(
@@ -711,13 +773,42 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _navIcon(IconData icon, {required bool active, required String role}) {
+    final accent = RoleVisuals.forRole(role).accent;
+    if (!active) return Icon(icon, size: 22);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.7, end: 1.0),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.elasticOut,
+      builder: (context, scale, child) {
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: accent.withValues(alpha: 0.24)),
+        ),
+        child: Icon(icon, size: 22, color: accent),
+      ),
+    );
+  }
+
   Drawer _buildDrawer(
     BuildContext context,
     User user,
     Map<String, dynamic> data,
     String role,
+    List<MobileRouteSpec> mobileRoutes,
+    int selectedIndex,
   ) {
-    final displayName = (data['name'] ?? user.displayName ?? 'User').toString();
+    final displayName = ProfileIdentity.displayNameFrom(data, authUser: user);
+    final profileImageUrl = ProfileIdentity.profileImageUrlFrom(
+      data,
+      authUser: user,
+    );
     final scheme = Theme.of(context).colorScheme;
     return Drawer(
       child: Column(
@@ -760,10 +851,13 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 CircleAvatar(
                   radius: 24,
-                  backgroundImage: user.photoURL != null
-                      ? NetworkImage(user.photoURL!)
+                  backgroundImage: profileImageUrl.isNotEmpty
+                      ? NetworkImage(profileImageUrl)
                       : null,
-                  child: user.photoURL == null
+                  onBackgroundImageError: profileImageUrl.isNotEmpty
+                      ? (_, __) {}
+                      : null,
+                  child: profileImageUrl.isEmpty
                       ? Text(
                           displayName.isNotEmpty
                               ? displayName[0].toUpperCase()
@@ -794,6 +888,83 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const Divider(),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF0F766E), Color(0xFF1E293B)],
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.pets, color: Colors.white),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Tiger tip: jump to any section from here instead of scrolling through the app.',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ...List.generate(mobileRoutes.length, (index) {
+                  final route = mobileRoutes[index];
+                  final active = index == selectedIndex;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      leading: _navIcon(route.icon, active: active, role: role),
+                      title: Text(route.label),
+                      trailing: active
+                          ? Icon(
+                              Icons.check_circle,
+                              color: RoleVisuals.forRole(role).accent,
+                            )
+                          : const Icon(Icons.chevron_right),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      tileColor: active
+                          ? RoleVisuals.forRole(
+                              role,
+                            ).chipBackground.withValues(alpha: 0.7)
+                          : scheme.surfaceContainerLow,
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        _setIndex(index);
+                      },
+                    ),
+                  );
+                }),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  value: AppThemeController.themeMode.value == ThemeMode.dark,
+                  title: const Text('Dark mode'),
+                  subtitle: const Text('Switch the current theme'),
+                  secondary: const Icon(Icons.dark_mode_outlined),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  tileColor: scheme.surfaceContainerLow,
+                  onChanged: (_) => AppThemeController.toggleTheme(),
+                ),
+                const SizedBox(height: 12),
+                // ── Quick stats section ──
+                _DrawerQuickStats(userId: user.uid, role: role),
+              ],
+            ),
+          ),
           // ── Sign Out ── (always visible, no Spacer)
           SafeArea(
             top: false,
@@ -818,6 +989,121 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Quick stats card shown in the drawer below navigation items.
+class _DrawerQuickStats extends StatelessWidget {
+  const _DrawerQuickStats({required this.userId, required this.role});
+
+  final String userId;
+  final String role;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isSeekerLike = role == UserRoles.seeker || role == UserRoles.guest;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.insights, size: 16, color: scheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                'Quick Stats',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirestoreRefs.bookings()
+                .where(
+                  isSeekerLike ? 'seekerId' : 'providerId',
+                  isEqualTo: userId,
+                )
+                .snapshots(),
+            builder: (context, snapshot) {
+              final docs = snapshot.data?.docs ?? [];
+              final active = docs.where((d) {
+                final s = (d.data()['status'] ?? '').toString();
+                return s == 'pending' || s == 'accepted';
+              }).length;
+              final completed = docs
+                  .where((d) => d.data()['status'] == 'completed')
+                  .length;
+              return Row(
+                children: [
+                  _miniStat(context, Icons.timelapse, '$active', 'Active'),
+                  const SizedBox(width: 12),
+                  _miniStat(context, Icons.task_alt, '$completed', 'Done'),
+                  const SizedBox(width: 12),
+                  _miniStat(
+                    context,
+                    Icons.folder_outlined,
+                    '${docs.length}',
+                    'Total',
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Lanka Connect v1.0',
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniStat(
+    BuildContext context,
+    IconData icon,
+    String value,
+    String label,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 16, color: scheme.primary),
+            const SizedBox(height: 2),
+            Text(
+              value,
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
+                color: scheme.onSurface,
+              ),
+            ),
+            Text(
+              label,
+              style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -4,6 +4,19 @@ import 'package:flutter/material.dart';
 import '../../ui/mobile/mobile_tokens.dart';
 import '../utils/firestore_refs.dart';
 
+DateTime? _parseOptionalDate(dynamic value) {
+  if (value == null) return null;
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  if (value is num) {
+    return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+  }
+  if (value is String) {
+    return DateTime.tryParse(value.trim());
+  }
+  return null;
+}
+
 /// Data for a single banner slide.
 class BannerData {
   const BannerData({
@@ -33,25 +46,32 @@ class BannerData {
 
   /// Create from Firestore document data.
   factory BannerData.fromMap(Map<String, dynamic> data) {
+    const fallbackColor = Color(0xFF2563EB);
     Color color;
     try {
-      final hex = (data['colorHex'] ?? '').toString().replaceAll('#', '');
-      color = Color(int.parse('FF$hex', radix: 16));
+      final hex = (data['colorHex'] ?? '')
+          .toString()
+          .replaceAll('#', '')
+          .trim();
+      if (hex.length == 6) {
+        color = Color(int.parse('FF$hex', radix: 16));
+      } else if (hex.length == 8) {
+        color = Color(int.parse(hex, radix: 16));
+      } else {
+        color = fallbackColor;
+      }
     } catch (_) {
-      color = const Color(0xFF2563EB);
+      color = fallbackColor;
     }
+    final rawUrl = (data['imageUrl'] ?? '').toString().trim();
     return BannerData(
       title: (data['title'] ?? '').toString(),
       subtitle: (data['subtitle'] ?? '').toString(),
       ctaText: (data['ctaText'] ?? 'Learn More').toString(),
       color: color,
-      imageUrl: (data['imageUrl'] ?? '').toString(),
-      scheduledStart: data['scheduledStart'] != null
-          ? (data['scheduledStart'] as Timestamp).toDate()
-          : null,
-      scheduledEnd: data['scheduledEnd'] != null
-          ? (data['scheduledEnd'] as Timestamp).toDate()
-          : null,
+      imageUrl: rawUrl.isEmpty ? null : rawUrl,
+      scheduledStart: _parseOptionalDate(data['scheduledStart']),
+      scheduledEnd: _parseOptionalDate(data['scheduledEnd']),
     );
   }
 }
@@ -134,10 +154,19 @@ class _BannerCarouselState extends State<BannerCarousel> {
         // Build banner list: Firestore docs if available, else defaults
         final List<BannerData> banners;
         if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
-          banners = snapshot.data!.docs
-              .map((d) => BannerData.fromMap(d.data()))
-              .where((b) => b.isWithinSchedule)
-              .toList();
+          final remoteBanners = <BannerData>[];
+          for (final doc in snapshot.data!.docs) {
+            try {
+              remoteBanners.add(BannerData.fromMap(doc.data()));
+            } catch (_) {
+              // Skip malformed docs; keep carousel usable.
+            }
+          }
+
+          banners = remoteBanners.where((b) => b.isWithinSchedule).toList();
+          if (banners.isEmpty) {
+            banners.addAll(_defaultBanners);
+          }
         } else {
           banners = _defaultBanners;
         }

@@ -57,6 +57,43 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
     'Beauty',
     'Tutoring',
   ];
+  static const List<String> _districtOptions = [
+    'Colombo',
+    'Gampaha',
+    'Kalutara',
+    'Kandy',
+    'Galle',
+    'Kurunegala',
+    'Matara',
+  ];
+  static const Map<String, List<String>> _cityByDistrict = {
+    'Colombo': [
+      'Colombo 01',
+      'Colombo 03',
+      'Colombo 07',
+      'Nugegoda',
+      'Dehiwala',
+      'Rajagiriya',
+      'Battaramulla',
+      'Kotte',
+      'Maharagama',
+      'Mount Lavinia',
+    ],
+    'Gampaha': [
+      'Negombo',
+      'Kadawatha',
+      'Ja-Ela',
+      'Wattala',
+      'Gampaha',
+      'Minuwangoda',
+      'Kelaniya',
+    ],
+    'Kalutara': ['Panadura', 'Horana', 'Kalutara', 'Beruwala', 'Bandaragama'],
+    'Kandy': ['Kandy', 'Peradeniya', 'Katugastota', 'Gampola', 'Digana'],
+    'Galle': ['Galle', 'Hikkaduwa', 'Ambalangoda', 'Elpitiya', 'Karapitiya'],
+    'Kurunegala': ['Kurunegala', 'Kuliyapitiya', 'Narammala', 'Pannala'],
+    'Matara': ['Matara', 'Weligama', 'Akuressa', 'Dikwella'],
+  };
   static const double _defaultRadiusKm = 10;
   static const double _maxRadiusKm = 100;
   static const int _pageSize = 20;
@@ -879,6 +916,24 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
   }
 
   Widget _filters() {
+    InputDecoration filterDecoration(String labelText) {
+      final scheme = Theme.of(context).colorScheme;
+      return InputDecoration(
+        labelText: labelText,
+        labelStyle: TextStyle(
+          color: scheme.onSurface,
+          fontWeight: FontWeight.w600,
+        ),
+        isDense: true,
+        filled: true,
+        fillColor: scheme.surface,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 12,
+        ),
+      );
+    }
+
     return SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -888,42 +943,56 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               Expanded(
                 child: TextField(
                   controller: _queryController,
-                  decoration: const InputDecoration(
-                    labelText: 'Search',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                  ),
+                  decoration: filterDecoration('Search services'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: TextField(
-                  controller: _categoryController,
-                  decoration: const InputDecoration(
-                    labelText: 'Category',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
+                child: DropdownButtonFormField<String>(
+                  value: _categoryController.text.trim().isEmpty
+                      ? null
+                      : _categoryController.text.trim(),
+                  decoration: filterDecoration('Category'),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: '',
+                      child: Text('All categories'),
                     ),
-                  ),
+                    ..._quickCategories.map(
+                      (category) => DropdownMenuItem<String>(
+                        value: category,
+                        child: Text(category),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    _categoryController.text = value ?? '';
+                  },
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: TextField(
-                  controller: _districtController,
-                  decoration: const InputDecoration(
-                    labelText: 'District',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
+                child: DropdownButtonFormField<String>(
+                  value: _districtController.text.trim().isEmpty
+                      ? null
+                      : _districtController.text.trim(),
+                  decoration: filterDecoration('District'),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: '',
+                      child: Text('All districts'),
                     ),
-                  ),
+                    ..._districtOptions.map(
+                      (district) => DropdownMenuItem<String>(
+                        value: district,
+                        child: Text(district),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    _districtController.text = value ?? '';
+                    setState(() => _cityController.text = '');
+                  },
                 ),
               ),
             ],
@@ -932,16 +1001,32 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
           Row(
             children: [
               Expanded(
-                child: TextField(
-                  controller: _cityController,
-                  decoration: const InputDecoration(
-                    labelText: 'City',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
+                child: DropdownButtonFormField<String>(
+                  value: _cityController.text.trim().isEmpty
+                      ? null
+                      : _cityController.text.trim(),
+                  decoration: filterDecoration('City'),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: '',
+                      child: Text('All cities'),
                     ),
-                  ),
+                    ...(_cityByDistrict[_districtController.text.trim()] ??
+                              _cityByDistrict.values
+                                  .expand((cities) => cities)
+                                  .toSet()
+                                  .toList()
+                          ..sort())
+                        .map(
+                          (city) => DropdownMenuItem<String>(
+                            value: city,
+                            child: Text(city),
+                          ),
+                        ),
+                  ],
+                  onChanged: (value) {
+                    _cityController.text = value ?? '';
+                  },
                 ),
               ),
               const SizedBox(width: 12),
@@ -1012,15 +1097,8 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<double>(
-                    initialValue: _radiusKm,
-                    decoration: const InputDecoration(
-                      labelText: 'Radius',
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                    ),
+                    value: _radiusKm,
+                    decoration: filterDecoration('Radius'),
                     items: _radiusOptions
                         .map(
                           (v) => DropdownMenuItem<double>(
@@ -1067,14 +1145,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
                 child: TextField(
                   controller: _minPriceController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Min pri...',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                  ),
+                  decoration: filterDecoration('Min price'),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1082,14 +1153,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
                 child: TextField(
                   controller: _maxPriceController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Max pri...',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                  ),
+                  decoration: filterDecoration('Max price'),
                 ),
               ),
               const SizedBox(width: 12),

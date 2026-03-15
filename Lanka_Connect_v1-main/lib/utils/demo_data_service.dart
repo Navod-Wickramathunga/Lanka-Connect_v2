@@ -29,6 +29,17 @@ class DemoDataService {
     const approvedServiceOneId = 'demo_service_cleaning';
     const approvedServiceTwoId = 'demo_service_plumbing';
     const pendingServiceId = 'demo_service_tutoring';
+    const approvedServiceElectricalId = 'demo_service_electrical';
+    const approvedServicePaintingId = 'demo_service_painting';
+    const approvedServiceGardeningId = 'demo_service_gardening';
+    const approvedServiceBeautyId = 'demo_service_beauty';
+    const approvedServiceCarpentryId = 'demo_service_carpentry';
+    const demoRequestPendingId = 'demo_request_pending';
+    const demoRequestRejectedId = 'demo_request_rejected';
+    const demoRequestAcceptedId = 'demo_request_accepted';
+    const promoWeekendId = 'demo_promo_weekend';
+    const promoPlumbingId = 'demo_promo_plumbing';
+    const demoOfferId = 'demo_offer_cleaning';
     final suffix = callerUid.substring(0, 6);
     final acceptedBookingId = 'demo_booking_accepted_$suffix';
     final completedBookingId = 'demo_booking_completed_$suffix';
@@ -43,8 +54,18 @@ class DemoDataService {
     final serviceOneRef = db.collection('services').doc(approvedServiceOneId);
     final serviceTwoRef = db.collection('services').doc(approvedServiceTwoId);
     final pendingServiceRef = db.collection('services').doc(pendingServiceId);
+    final requestPendingRef = db
+        .collection('requests')
+        .doc(demoRequestPendingId);
+    final requestRejectedRef = db
+        .collection('requests')
+        .doc(demoRequestRejectedId);
+    final promoWeekendRef = db.collection('promotions').doc(promoWeekendId);
+    final promoPlumbingRef = db.collection('promotions').doc(promoPlumbingId);
     final acceptedBookingRef = db.collection('bookings').doc(acceptedBookingId);
-    final completedBookingRef = db.collection('bookings').doc(completedBookingId);
+    final completedBookingRef = db
+        .collection('bookings')
+        .doc(completedBookingId);
 
     try {
       await providerRef.set({
@@ -75,6 +96,8 @@ class DemoDataService {
           'district': 'Colombo',
           'city': 'Nugegoda',
           'location': 'Nugegoda, Colombo',
+          'lat': 6.8721,
+          'lng': 79.8883,
           'description': 'Apartment and house deep cleaning service.',
           'status': 'approved',
           'createdAt': FieldValue.serverTimestamp(),
@@ -93,6 +116,8 @@ class DemoDataService {
           'district': 'Gampaha',
           'city': 'Kadawatha',
           'location': 'Kadawatha, Gampaha',
+          'lat': 7.0013,
+          'lng': 79.9528,
           'description': 'Leak repairs and basic plumbing maintenance.',
           'status': 'approved',
           'createdAt': FieldValue.serverTimestamp(),
@@ -111,12 +136,121 @@ class DemoDataService {
           'district': 'Colombo',
           'city': 'Dehiwala',
           'location': 'Dehiwala, Colombo',
+          'lat': 6.8560,
+          'lng': 79.8650,
           'description': 'One-to-one O/L maths support sessions.',
           'status': 'pending',
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         },
         desiredStatus: 'pending',
+        result: result,
+      );
+
+      // Additional diverse services
+      await _seedService(
+        ref: db.collection('services').doc(approvedServiceElectricalId),
+        payload: {
+          'providerId': providerId,
+          'title': 'Electrical Wiring & Repairs',
+          'category': 'Electrical',
+          'price': 4500,
+          'district': 'Colombo',
+          'city': 'Rajagiriya',
+          'location': 'Rajagiriya, Colombo',
+          'lat': 6.9060,
+          'lng': 79.8980,
+          'description':
+              'Full-house wiring inspection, switch replacements, and safety audits.',
+          'status': 'approved',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        desiredStatus: 'approved',
+        result: result,
+      );
+      await _seedService(
+        ref: db.collection('services').doc(approvedServicePaintingId),
+        payload: {
+          'providerId': providerId,
+          'title': 'Interior Wall Painting',
+          'category': 'Painting',
+          'price': 8000,
+          'district': 'Gampaha',
+          'city': 'Negombo',
+          'location': 'Negombo, Gampaha',
+          'lat': 7.2094,
+          'lng': 79.8358,
+          'description':
+              'Professional interior painting with premium emulsion paint. Includes furniture covering.',
+          'status': 'approved',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        desiredStatus: 'approved',
+        result: result,
+      );
+      await _seedService(
+        ref: db.collection('services').doc(approvedServiceGardeningId),
+        payload: {
+          'providerId': providerId,
+          'title': 'Garden Maintenance',
+          'category': 'Gardening',
+          'price': 3000,
+          'district': 'Kandy',
+          'city': 'Peradeniya',
+          'location': 'Peradeniya, Kandy',
+          'lat': 7.2590,
+          'lng': 80.5970,
+          'description':
+              'Lawn mowing, hedge trimming, and seasonal planting by experienced gardeners.',
+          'status': 'approved',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        desiredStatus: 'approved',
+        result: result,
+      );
+      await _seedService(
+        ref: db.collection('services').doc(approvedServiceBeautyId),
+        payload: {
+          'providerId': providerId,
+          'title': 'Bridal Makeup Package',
+          'category': 'Beauty',
+          'price': 15000,
+          'district': 'Colombo',
+          'city': 'Colombo 07',
+          'location': 'Colombo 07, Colombo',
+          'lat': 6.9147,
+          'lng': 79.8624,
+          'description':
+              'Complete bridal makeup with air-brush finish. Includes trial session.',
+          'status': 'approved',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        desiredStatus: 'approved',
+        result: result,
+      );
+      await _seedService(
+        ref: db.collection('services').doc(approvedServiceCarpentryId),
+        payload: {
+          'providerId': providerId,
+          'title': 'Custom Furniture Repair',
+          'category': 'Carpentry',
+          'price': 5500,
+          'district': 'Galle',
+          'city': 'Galle',
+          'location': 'Galle, Galle',
+          'lat': 6.0535,
+          'lng': 80.2210,
+          'description':
+              'Furniture repair, polishing, and custom shelf installation.',
+          'status': 'approved',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        desiredStatus: 'approved',
         result: result,
       );
     } catch (e, st) {
@@ -133,6 +267,11 @@ class DemoDataService {
           'seekerId': callerUid,
           'amount': 3500,
           'status': 'pending',
+          'scheduledDateKey': DateTime.now()
+              .add(const Duration(days: 2))
+              .toIso8601String()
+              .split('T')
+              .first,
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         },
@@ -148,6 +287,11 @@ class DemoDataService {
           'seekerId': callerUid,
           'amount': 2500,
           'status': 'pending',
+          'scheduledDateKey': DateTime.now()
+              .subtract(const Duration(days: 3))
+              .toIso8601String()
+              .split('T')
+              .first,
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         },
@@ -157,6 +301,84 @@ class DemoDataService {
     } catch (e, st) {
       _logPhaseError('seed_demo_bookings', e, st);
       throw _seedPhaseException('seed_demo_bookings', e);
+    }
+
+    try {
+      await requestPendingRef.set({
+        'serviceId': approvedServiceOneId,
+        'providerId': providerId,
+        'seekerId': callerUid,
+        'status': 'pending',
+        'timeWindow': 'Morning',
+        'notes': 'Need access from the side gate.',
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      await requestRejectedRef.set({
+        'serviceId': pendingServiceId,
+        'providerId': providerId,
+        'seekerId': callerUid,
+        'status': 'rejected',
+        'timeWindow': 'Flexible',
+        'notes': 'Need support after office hours.',
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      await db.collection('requests').doc(demoRequestAcceptedId).set({
+        'serviceId': approvedServiceElectricalId,
+        'providerId': providerId,
+        'seekerId': callerUid,
+        'status': 'accepted',
+        'timeWindow': 'Morning',
+        'scheduledDate': DateTime.now()
+            .add(const Duration(days: 2))
+            .toIso8601String()
+            .split('T')
+            .first,
+        'notes': 'Please bring extra wire rolls.',
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      await db.collection('offers').doc(demoOfferId).set({
+        'title': '20% Off Cleaning Services',
+        'description': 'Book any Cleaning service this week and save 20%.',
+        'discountType': 'percentage',
+        'discountValue': 20,
+        'linkedCategory': 'Cleaning',
+        'targetCategory': 'Cleaning',
+        'isActive': true,
+        'active': true,
+        'startsAt': Timestamp.fromDate(
+          DateTime.now().subtract(const Duration(days: 1)),
+        ),
+        'endsAt': Timestamp.fromDate(
+          DateTime.now().add(const Duration(days: 30)),
+        ),
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      await promoWeekendRef.set({
+        'title': 'Weekend Cleaner',
+        'description': 'Save on your next home cleaning booking.',
+        'discount': '15% OFF',
+        'linkedCategory': 'Cleaning',
+        'colorHex': 'F43F5E',
+        'iconName': 'cleaning_services',
+        'expiry': 'Ends Sunday',
+        'active': true,
+        'order': 1,
+      }, SetOptions(merge: true));
+      await promoPlumbingRef.set({
+        'title': 'Pipe Rescue',
+        'description': 'Flat discount on quick plumbing fixes.',
+        'discount': 'Rs. 500 OFF',
+        'linkedCategory': 'Plumbing',
+        'colorHex': '2563EB',
+        'iconName': 'plumbing',
+        'expiry': 'Limited Time',
+        'active': true,
+        'order': 2,
+      }, SetOptions(merge: true));
+      result['updated'] = (result['updated'] as int) + 6;
+    } catch (e, st) {
+      _logPhaseError('seed_demo_requests_promotions', e, st);
+      throw _seedPhaseException('seed_demo_requests_promotions', e);
     }
 
     late final String reviewId;
@@ -181,15 +403,28 @@ class DemoDataService {
         'recipientId': callerUid,
         'senderId': callerUid,
         'title': 'Demo data ready',
-        'body': 'Seed completed successfully. Refresh tabs to view sample data.',
+        'body':
+            'Seed completed successfully. Refresh tabs to view sample data.',
         'type': 'system',
         'data': {
           'services': [
             approvedServiceOneId,
             approvedServiceTwoId,
             pendingServiceId,
+            approvedServiceElectricalId,
+            approvedServicePaintingId,
+            approvedServiceGardeningId,
+            approvedServiceBeautyId,
+            approvedServiceCarpentryId,
           ],
           'bookings': [acceptedBookingId, completedBookingId],
+          'requests': [
+            demoRequestPendingId,
+            demoRequestRejectedId,
+            demoRequestAcceptedId,
+          ],
+          'promotions': [promoWeekendId, promoPlumbingId],
+          'offers': [demoOfferId],
           'summary': {
             'created': result['created'],
             'updated': result['updated'],
@@ -213,6 +448,11 @@ class DemoDataService {
         approvedServiceOneId,
         approvedServiceTwoId,
         pendingServiceId,
+        approvedServiceElectricalId,
+        approvedServicePaintingId,
+        approvedServiceGardeningId,
+        approvedServiceBeautyId,
+        approvedServiceCarpentryId,
       ],
       'bookings': [acceptedBookingId, completedBookingId],
       'reviewId': reviewId,
@@ -257,8 +497,9 @@ class DemoDataService {
       result['created'] = (result['created'] as int) + 1;
     }
 
-    final status = (snap.data()?['status'] ?? createPayload['status'] ?? 'pending')
-        .toString();
+    final status =
+        (snap.data()?['status'] ?? createPayload['status'] ?? 'pending')
+            .toString();
 
     if (desiredStatus == 'accepted') {
       if (status == 'accepted' || status == 'completed') {
@@ -329,7 +570,11 @@ class DemoDataService {
     return reviewRef.id;
   }
 
-  static void _logPhaseError(String phase, Object error, StackTrace stackTrace) {
+  static void _logPhaseError(
+    String phase,
+    Object error,
+    StackTrace stackTrace,
+  ) {
     debugPrint('Seed error [$phase]: $error');
     debugPrint(stackTrace.toString());
   }

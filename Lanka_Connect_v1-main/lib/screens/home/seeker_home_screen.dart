@@ -8,6 +8,8 @@ import '../../ui/theme/design_tokens.dart';
 import '../../utils/display_name_utils.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/geo_utils.dart';
+import '../../utils/profile_identity.dart';
+import '../../utils/app_feedback.dart';
 import '../../widgets/banner_carousel.dart';
 import '../../widgets/category_bar.dart';
 import '../../widgets/promotion_section.dart';
@@ -189,10 +191,10 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                   final isProviderCta =
                       ctaText.contains('register') || title.contains('join');
                   if (isProviderCta) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Provider registration is coming soon!'),
-                      ),
+                    TigerFeedback.show(
+                      context,
+                      'Tiger note: provider sign-up is coming soon.',
+                      tone: TigerFeedbackTone.info,
                     );
                     return;
                   }
@@ -466,16 +468,28 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
           : null,
       builder: (context, snapshot) {
         String displayName = 'there';
+        String profileImageUrl = '';
         if (snapshot.hasData && snapshot.data!.exists) {
           final data = snapshot.data!.data() as Map<String, dynamic>?;
-          final firestoreName = (data?['name'] ?? '').toString().trim();
-          if (firestoreName.isNotEmpty) {
-            displayName = firestoreName.split(' ').first;
-          } else if (user?.displayName?.isNotEmpty == true) {
-            displayName = user!.displayName!.split(' ').first;
-          }
-        } else if (user?.displayName?.isNotEmpty == true) {
-          displayName = user!.displayName!.split(' ').first;
+          displayName = ProfileIdentity.displayNameFrom(
+            data,
+            authUser: user,
+            fallback: 'there',
+          ).split(' ').first;
+          profileImageUrl = ProfileIdentity.profileImageUrlFrom(
+            data,
+            authUser: user,
+          );
+        } else {
+          displayName = ProfileIdentity.displayNameFrom(
+            null,
+            authUser: user,
+            fallback: 'there',
+          ).split(' ').first;
+          profileImageUrl = ProfileIdentity.profileImageUrlFrom(
+            null,
+            authUser: user,
+          );
         }
 
         return Container(
@@ -534,14 +548,24 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                 backgroundColor: DesignTokens.brandPrimary.withValues(
                   alpha: 0.15,
                 ),
-                child: Text(
-                  displayName[0].toUpperCase(),
-                  style: const TextStyle(
-                    color: DesignTokens.brandPrimary,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 18,
-                  ),
-                ),
+                backgroundImage: profileImageUrl.isNotEmpty
+                    ? NetworkImage(profileImageUrl)
+                    : null,
+                onBackgroundImageError: profileImageUrl.isNotEmpty
+                    ? (_, __) {}
+                    : null,
+                child: profileImageUrl.isEmpty
+                    ? Text(
+                        displayName.isNotEmpty
+                            ? displayName[0].toUpperCase()
+                            : 'U',
+                        style: const TextStyle(
+                          color: DesignTokens.brandPrimary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 18,
+                        ),
+                      )
+                    : null,
               ),
             ],
           ),

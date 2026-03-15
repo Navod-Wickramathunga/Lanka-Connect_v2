@@ -6,11 +6,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../models/offer.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
+import '../../utils/app_feedback.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
+import '../../utils/offer_service.dart';
 import '../../utils/validators.dart';
 
 enum _PaymentMethod { card, savedCard, bankTransfer }
@@ -113,6 +116,66 @@ class _PaymentScreenState extends State<PaymentScreen> {
     return net is num ? net.toDouble() : fallback;
   }
 
+  Future<AppliedOfferResult?> _loadBestOffer(
+    Map<String, dynamic> booking,
+  ) async {
+    final serviceId = (booking['serviceId'] ?? '').toString();
+    final providerId = (booking['providerId'] ?? '').toString();
+    final grossAmount = (booking['amount'] is num)
+        ? (booking['amount'] as num).toDouble()
+        : 0.0;
+    if (serviceId.isEmpty || providerId.isEmpty || grossAmount <= 0) {
+      return null;
+    }
+
+    final serviceSnap = await FirestoreRefs.services().doc(serviceId).get();
+    final serviceData = serviceSnap.data();
+    if (serviceData == null) return null;
+
+    final offers = await OfferService.loadActiveOffers();
+    return OfferService.resolveBestOffer(
+      offers: offers,
+      grossAmount: grossAmount,
+      serviceId: serviceId,
+      providerId: providerId,
+      category: (serviceData['category'] ?? '').toString(),
+    );
+  }
+
+  Future<void> _applyOffer(AppliedOfferResult offer) async {
+    await FirestoreRefs.bookings().doc(widget.bookingId).set({
+      'appliedOfferId': offer.offerId,
+      'discountAmount': offer.discountAmount,
+      'grossAmount': offer.grossAmount,
+      'netAmount': offer.netAmount,
+      'appliedOfferMeta': offer.meta,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    if (!mounted) return;
+    TigerFeedback.show(
+      context,
+      'Tiger applied your best discount.',
+      tone: TigerFeedbackTone.success,
+    );
+  }
+
+  Future<void> _clearOffer() async {
+    await FirestoreRefs.bookings().doc(widget.bookingId).update({
+      'appliedOfferId': FieldValue.delete(),
+      'discountAmount': FieldValue.delete(),
+      'grossAmount': FieldValue.delete(),
+      'netAmount': FieldValue.delete(),
+      'appliedOfferMeta': FieldValue.delete(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    if (!mounted) return;
+    TigerFeedback.show(
+      context,
+      'Tiger removed the discount.',
+      tone: TigerFeedbackTone.info,
+    );
+  }
+
   bool _isPaymentFinalStatus(String status) =>
       status == 'paid' || status == 'success';
 
@@ -176,12 +239,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Checkout session created. Complete payment in gateway.',
-          ),
-        ),
+      TigerFeedback.show(
+        context,
+        'Tiger opened checkout for you.',
+        tone: TigerFeedbackTone.success,
       );
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
@@ -246,12 +307,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
         'paidAt': Timestamp.fromDate(_transferPaidAt!),
       });
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Bank transfer submitted. Waiting for admin verification.',
-          ),
-        ),
+      TigerFeedback.show(
+        context,
+        'Tiger sent your transfer for verification.',
+        tone: TigerFeedbackTone.success,
       );
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
@@ -265,6 +324,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   Widget _buildAmountCard(Map<String, dynamic> booking) {
+    final appliedOfferMeta = booking['appliedOfferMeta'];
+    final appliedOfferTitle = appliedOfferMeta is Map
+        ? (appliedOfferMeta['title'] ?? '').toString()
+        : '';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -286,11 +349,92 @@ class _PaymentScreenState extends State<PaymentScreen> {
             if ((booking['appliedOfferId'] ?? '').toString().isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
-                child: Text('Applied offer: ${booking['appliedOfferId']}'),
+                child: Text(
+                  appliedOfferTitle.isNotEmpty
+                      ? 'Applied offer: $appliedOfferTitle'
+                      : 'Applied offer: ${booking['appliedOfferId']}',
+                ),
               ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildOfferSection(Map<String, dynamic> booking, bool actionsLocked) {
+    final appliedOfferId = (booking['appliedOfferId'] ?? '').toString();
+    final appliedOfferMeta = booking['appliedOfferMeta'];
+    final appliedOfferTitle = appliedOfferMeta is Map
+        ? (appliedOfferMeta['title'] ?? '').toString()
+        : '';
+
+    return FutureBuilder<AppliedOfferResult?>(
+      future: _loadBestOffer(booking),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Card(
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: LinearProgressIndicator(),
+            ),
+          );
+        }
+
+        final bestOffer = snapshot.data;
+        final hasAppliedOffer = appliedOfferId.isNotEmpty;
+        if (!hasAppliedOffer && bestOffer == null) {
+          return const SizedBox.shrink();
+        }
+
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Exclusive Offer',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  hasAppliedOffer
+                      ? 'Applied at checkout: ${appliedOfferTitle.isNotEmpty ? appliedOfferTitle : appliedOfferId}'
+                      : bestOffer!.meta['title'].toString(),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  hasAppliedOffer
+                      ? 'Discount saved: LKR ${booking['discountAmount'] ?? 0}'
+                      : 'You can save LKR ${bestOffer.discountAmount.toStringAsFixed(0)} on this checkout.',
+                ),
+                if (!actionsLocked && bestOffer != null) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: hasAppliedOffer
+                            ? null
+                            : () => _applyOffer(bestOffer),
+                        icon: const Icon(Icons.local_offer_outlined),
+                        label: const Text('Apply Discount'),
+                      ),
+                      if (hasAppliedOffer)
+                        OutlinedButton.icon(
+                          onPressed: _clearOffer,
+                          icon: const Icon(Icons.close),
+                          label: const Text('Remove'),
+                        ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -901,6 +1045,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
         final actionsLocked = !_canStartNewPayment(paymentStatus);
         final sections = <Widget>[
           _buildAmountCard(booking),
+          const SizedBox(height: 12),
+          _buildOfferSection(booking, actionsLocked),
           const SizedBox(height: 12),
           _buildBookingPaymentBanner(paymentStatus),
           if (paymentStatus.isNotEmpty) const SizedBox(height: 12),

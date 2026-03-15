@@ -222,9 +222,28 @@ class _ServiceMapScreenState extends State<ServiceMapScreen> {
         if (!_mapReady)
           Positioned.fill(
             child: Container(
-              color: Theme.of(context).colorScheme.surface,
+              color: Theme.of(context).colorScheme.surface.withValues(
+                alpha: 0.92,
+              ),
+              padding: const EdgeInsets.all(24),
               alignment: Alignment.center,
-              child: const Text('Loading map...'),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Loading Google Map...',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'If tiles stay blank, keep browsing from the provider list below while the map finishes loading.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
           ),
       ],

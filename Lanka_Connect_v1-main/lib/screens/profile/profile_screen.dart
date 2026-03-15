@@ -13,6 +13,7 @@ import '../../ui/web/web_page_scaffold.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
+import '../../utils/app_feedback.dart';
 import '../../utils/user_roles.dart';
 import '../../utils/validators.dart';
 
@@ -84,11 +85,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
         setState(() {
           _saving = false;
         });
-        ScaffoldMessenger.of(
+        TigerFeedback.show(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Profile saved.')));
+          'Tiger saved your profile.',
+          tone: TigerFeedbackTone.success,
+        );
       }
     } on FirebaseException catch (e, st) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+        });
+      }
       FirestoreErrorHandler.logWriteError(
         operation: 'users_set_profile',
         error: e,
@@ -173,13 +181,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
 
       final url = await ref.getDownloadURL();
+      await FirestoreRefs.users().doc(user.uid).set({
+        'imageUrl': url,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      await user.updatePhotoURL(url);
+
       setState(() {
         _imageUrl = url;
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Image uploaded successfully!')),
+        TigerFeedback.show(
+          context,
+          'Tiger updated your profile photo.',
+          tone: TigerFeedbackTone.success,
         );
       }
     } on FirebaseException catch (e, st) {
@@ -245,6 +261,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _hydrateFields(data);
           _initialized = true;
         }
+        // Keep profile image in sync with Firestore (e.g. uploaded from another device)
+        final latestImageUrl = (data['imageUrl'] ?? '').toString();
+        if (latestImageUrl.isNotEmpty && latestImageUrl != _imageUrl) {
+          _imageUrl = latestImageUrl;
+        }
 
         final content = SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -259,6 +280,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       radius: 36,
                       backgroundImage: _imageUrl.isNotEmpty
                           ? NetworkImage(_imageUrl)
+                          : null,
+                      onBackgroundImageError: _imageUrl.isNotEmpty
+                          ? (_, __) {}
                           : null,
                       child: _imageUrl.isEmpty
                           ? const Icon(Icons.person)
@@ -291,9 +315,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: _districtController,
-                        decoration: const InputDecoration(labelText: 'District'),
-                        validator: (value) =>
-                            Validators.requiredField(value, 'District required'),
+                        decoration: const InputDecoration(
+                          labelText: 'District',
+                        ),
+                        validator: (value) => Validators.requiredField(
+                          value,
+                          'District required',
+                        ),
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
@@ -319,7 +347,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         const SizedBox(height: 12),
                         TextFormField(
                           controller: _bioController,
-                          decoration: const InputDecoration(labelText: 'Short bio'),
+                          decoration: const InputDecoration(
+                            labelText: 'Short bio',
+                          ),
                           maxLines: 3,
                         ),
                       ],

@@ -2,14 +2,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../ui/mobile/mobile_components.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
+import '../../utils/app_feedback.dart';
 import '../../utils/geo_utils.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/notification_service.dart';
+import '../../utils/presence_service.dart';
+import '../../utils/profile_identity.dart';
 import '../../utils/user_roles.dart';
 import '../../widgets/service_map_preview.dart';
 import 'service_map_screen.dart';
@@ -81,9 +85,11 @@ class ServiceDetailScreen extends StatelessWidget {
       await FirestoreRefs.services().doc(serviceId).delete();
       if (context.mounted) {
         Navigator.of(context).pop(); // Go back after deletion
-        ScaffoldMessenger.of(
+        TigerFeedback.show(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Service deleted.')));
+          'Service deleted',
+          tone: TigerFeedbackTone.success,
+        );
       }
     } catch (e) {
       if (context.mounted) {
@@ -164,6 +170,9 @@ class ServiceDetailScreen extends StatelessWidget {
     String providerId,
     double amount,
     String serviceTitle,
+    DateTime? scheduledDate,
+    String timeWindow,
+    String notes,
   ) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -177,7 +186,13 @@ class ServiceDetailScreen extends StatelessWidget {
         'providerId': providerId,
         'seekerId': user.uid,
         'amount': amount,
+        'notes': notes,
         'status': 'pending',
+        if (scheduledDate != null)
+          'scheduledDate': Timestamp.fromDate(scheduledDate),
+        if (scheduledDate != null)
+          'scheduledDateKey': DateFormat('yyyy-MM-dd').format(scheduledDate),
+        if (timeWindow.trim().isNotEmpty) 'timeWindow': timeWindow,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -207,9 +222,11 @@ class ServiceDetailScreen extends StatelessWidget {
       );
 
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
+      TigerFeedback.show(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Booking request sent.')));
+        'Tiger sent your booking request.',
+        tone: TigerFeedbackTone.success,
+      );
     } on FirebaseException catch (e, st) {
       FirestoreErrorHandler.logWriteError(
         operation: 'bookings_add',
@@ -252,6 +269,9 @@ class ServiceDetailScreen extends StatelessWidget {
     String serviceId,
     String providerId,
     String serviceTitle,
+    DateTime? scheduledDate,
+    String timeWindow,
+    String notes,
   ) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -264,7 +284,13 @@ class ServiceDetailScreen extends StatelessWidget {
         'serviceId': serviceId,
         'providerId': providerId,
         'seekerId': user.uid,
+        'notes': notes,
         'status': 'pending',
+        if (scheduledDate != null)
+          'scheduledDate': Timestamp.fromDate(scheduledDate),
+        if (scheduledDate != null)
+          'scheduledDateKey': DateFormat('yyyy-MM-dd').format(scheduledDate),
+        if (timeWindow.trim().isNotEmpty) 'timeWindow': timeWindow,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -294,9 +320,11 @@ class ServiceDetailScreen extends StatelessWidget {
       );
 
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
+      TigerFeedback.show(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Service request created.')));
+        'Tiger sent your request to the provider.',
+        tone: TigerFeedbackTone.success,
+      );
     } on FirebaseException catch (e, st) {
       FirestoreErrorHandler.logWriteError(
         operation: 'requests_add',
@@ -332,6 +360,486 @@ class ServiceDetailScreen extends StatelessWidget {
         );
       }
     }
+  }
+
+  Future<void> _showServiceActionSheet({
+    required BuildContext context,
+    required bool isBooking,
+    required String serviceId,
+    required String providerId,
+    required String serviceTitle,
+    required double amount,
+  }) async {
+    final notesController = TextEditingController();
+    DateTime? selectedDate;
+    String selectedWindow = 'Flexible';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final selectedDateKey = selectedDate == null
+                ? null
+                : DateFormat('yyyy-MM-dd').format(selectedDate!);
+
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                8,
+                16,
+                MediaQuery.of(context).viewInsets.bottom + 16,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      isBooking ? 'Book Service' : 'Create Request',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      isBooking
+                          ? 'Booking keeps the listed price and sends a direct schedule request to the provider.'
+                          : 'Request lets you explain your needs first. The provider reviews it and may create a booking after approval.',
+                    ),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final now = DateTime.now();
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: selectedDate ?? now,
+                          firstDate: now,
+                          lastDate: now.add(const Duration(days: 90)),
+                        );
+                        if (picked == null) return;
+                        setModalState(() => selectedDate = picked);
+                      },
+                      icon: const Icon(Icons.calendar_today),
+                      label: Text(
+                        selectedDate == null
+                            ? 'Select preferred date'
+                            : DateFormat(
+                                'EEE, dd MMM yyyy',
+                              ).format(selectedDate!),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedWindow,
+                      decoration: const InputDecoration(
+                        labelText: 'Preferred time window',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'Morning',
+                          child: Text('Morning'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'Afternoon',
+                          child: Text('Afternoon'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'Evening',
+                          child: Text('Evening'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'Flexible',
+                          child: Text('Flexible'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setModalState(
+                          () => selectedWindow = value ?? 'Flexible',
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: notesController,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        labelText: isBooking
+                            ? 'Booking notes'
+                            : 'Explain your request',
+                        hintText: isBooking
+                            ? 'Gate number, materials, special instructions...'
+                            : 'Tell the provider what you need done before they approve.',
+                      ),
+                    ),
+                    if (selectedDateKey != null) ...[
+                      const SizedBox(height: 12),
+                      StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                        stream: FirestoreRefs.bookings()
+                            .where('providerId', isEqualTo: providerId)
+                            .where(
+                              'scheduledDateKey',
+                              isEqualTo: selectedDateKey,
+                            )
+                            .where(
+                              'status',
+                              whereIn: const ['pending', 'accepted'],
+                            )
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          final busyCount = snapshot.data?.docs.length ?? 0;
+                          final isAvailable = busyCount == 0;
+                          return Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: isAvailable
+                                  ? const Color(0xFFECFDF5)
+                                  : const Color(0xFFFFF7ED),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: isAvailable
+                                    ? const Color(0xFFA7F3D0)
+                                    : const Color(0xFFFED7AA),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  isAvailable
+                                      ? Icons.check_circle_outline
+                                      : Icons.schedule,
+                                  color: isAvailable
+                                      ? const Color(0xFF047857)
+                                      : const Color(0xFFC2410C),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    isAvailable
+                                        ? 'Provider looks free on the selected date.'
+                                        : 'Provider already has $busyCount active job(s) on this date.',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () async {
+                          if (isBooking && selectedDateKey != null) {
+                            final conflict = await FirestoreRefs.bookings()
+                                .where('providerId', isEqualTo: providerId)
+                                .where(
+                                  'scheduledDateKey',
+                                  isEqualTo: selectedDateKey,
+                                )
+                                .where(
+                                  'status',
+                                  whereIn: const ['pending', 'accepted'],
+                                )
+                                .limit(1)
+                                .get();
+                            if (conflict.docs.isNotEmpty) {
+                              if (context.mounted) {
+                                TigerFeedback.show(
+                                  context,
+                                  'Tiger says: pick another date for booking.',
+                                  tone: TigerFeedbackTone.warning,
+                                );
+                              }
+                              return;
+                            }
+                          }
+
+                          Navigator.of(context).pop();
+                          if (isBooking) {
+                            await _createBooking(
+                              context,
+                              serviceId,
+                              providerId,
+                              amount,
+                              serviceTitle,
+                              selectedDate,
+                              selectedWindow,
+                              notesController.text.trim(),
+                            );
+                          } else {
+                            await _createRequest(
+                              context,
+                              serviceId,
+                              providerId,
+                              serviceTitle,
+                              selectedDate,
+                              selectedWindow,
+                              notesController.text.trim(),
+                            );
+                          }
+                        },
+                        icon: Icon(
+                          isBooking ? Icons.event_available : Icons.send,
+                        ),
+                        label: Text(
+                          isBooking ? 'Confirm Booking' : 'Send Request',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    notesController.dispose();
+  }
+
+  Widget _buildFlowGuideCard(BuildContext context) {
+    return MobileSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'How This Works',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 10),
+          _flowLine(
+            context,
+            icon: Icons.event_available,
+            title: 'Book Service',
+            body:
+                'Price and scope are clear — pick a date and the provider confirms.',
+            color: const Color(0xFF0F766E),
+          ),
+          const SizedBox(height: 8),
+          _flowLine(
+            context,
+            icon: Icons.question_answer_outlined,
+            title: 'Create Request',
+            body:
+                'Need to explain the job first — the provider reviews before a booking is made.',
+            color: const Color(0xFFB45309),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _flowLine(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String body,
+    required Color color,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          margin: const EdgeInsets.only(top: 2),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 16, color: color),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(fontWeight: FontWeight.w700, color: color),
+              ),
+              const SizedBox(height: 2),
+              Text(body, style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _providerSummaryCard(BuildContext context, String providerId) {
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirestoreRefs.users().doc(providerId).snapshots(),
+      builder: (context, providerSnapshot) {
+        final providerData = providerSnapshot.data?.data();
+        final providerName = ProfileIdentity.displayNameFrom(
+          providerData,
+          fallback: 'Provider',
+        );
+        final online = PresenceService.isOnline(providerData);
+        final statusLabel = PresenceService.statusLabel(providerData);
+        final rating = (providerData?['averageRating'] is num)
+            ? (providerData!['averageRating'] as num).toDouble()
+            : 0.0;
+        final reviewCount = (providerData?['reviewCount'] is num)
+            ? (providerData!['reviewCount'] as num).toInt()
+            : 0;
+
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: FirestoreRefs.bookings()
+              .where('providerId', isEqualTo: providerId)
+              .snapshots(),
+          builder: (context, bookingSnapshot) {
+            final bookings = bookingSnapshot.data?.docs ?? const [];
+            final completedJobs = bookings
+                .where((doc) => (doc.data()['status'] ?? '') == 'completed')
+                .length;
+            final pendingJobs = bookings.where((doc) {
+              final status = (doc.data()['status'] ?? '').toString();
+              return status == 'pending' || status == 'accepted';
+            }).length;
+
+            return MobileSectionCard(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: online
+                        ? const Color(0xFFECFDF5)
+                        : Theme.of(context).colorScheme.surfaceContainerHighest,
+                    child: Text(
+                      providerName.isNotEmpty
+                          ? providerName[0].toUpperCase()
+                          : 'P',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: online
+                            ? const Color(0xFF047857)
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                providerName,
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w700),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.circle,
+                              size: 8,
+                              color: online
+                                  ? const Color(0xFF22C55E)
+                                  : Colors.grey,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              statusLabel,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: online
+                                    ? const Color(0xFF047857)
+                                    : Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.star,
+                              size: 13,
+                              color: const Color(0xFFFBBF24),
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              '${rating.toStringAsFixed(1)} ($reviewCount)',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            const SizedBox(width: 10),
+                            Icon(
+                              Icons.task_alt,
+                              size: 13,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              '$completedJobs done',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            const SizedBox(width: 10),
+                            Icon(
+                              Icons.timelapse,
+                              size: 13,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              '$pendingJobs active',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _statChip(IconData icon, String label) {
+    return Builder(
+      builder: (context) {
+        final scheme = Theme.of(context).colorScheme;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -499,7 +1007,16 @@ class ServiceDetailScreen extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 12),
-                MobileSectionCard(child: Text(data['description'] ?? '')),
+                _providerSummaryCard(context, providerId),
+                const SizedBox(height: 12),
+                MobileSectionCard(
+                  child: Text(
+                    data['description'] ?? '',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _buildFlowGuideCard(context),
                 const SizedBox(height: 16),
                 StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                   stream: FirestoreRefs.reviews()
@@ -534,7 +1051,9 @@ class ServiceDetailScreen extends StatelessWidget {
                   builder: (context, roleSnapshot) {
                     final role = user.isAnonymous
                         ? UserRoles.guest
-                        : UserRoles.normalize(roleSnapshot.data?.data()?['role']);
+                        : UserRoles.normalize(
+                            roleSnapshot.data?.data()?['role'],
+                          );
                     final isOwner = providerId == user.uid;
 
                     // Provider who owns this service — can delete it
@@ -580,10 +1099,10 @@ class ServiceDetailScreen extends StatelessWidget {
                                             FieldValue.serverTimestamp(),
                                       });
                                   if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Service approved.'),
-                                      ),
+                                    TigerFeedback.show(
+                                      context,
+                                      'Service approved',
+                                      tone: TigerFeedbackTone.success,
                                     );
                                   }
                                 } catch (e) {
@@ -614,10 +1133,10 @@ class ServiceDetailScreen extends StatelessWidget {
                                             FieldValue.serverTimestamp(),
                                       });
                                   if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Service rejected.'),
-                                      ),
+                                    TigerFeedback.show(
+                                      context,
+                                      'Service rejected',
+                                      tone: TigerFeedbackTone.warning,
                                     );
                                   }
                                 } catch (e) {
@@ -668,27 +1187,44 @@ class ServiceDetailScreen extends StatelessWidget {
                               ),
                             ),
                           ),
-                        ElevatedButton(
-                          onPressed: () => _createBooking(
-                            context,
-                            serviceId,
-                            providerId,
-                            (data['price'] is num)
+                        ElevatedButton.icon(
+                          onPressed: () => _showServiceActionSheet(
+                            context: context,
+                            isBooking: true,
+                            serviceId: serviceId,
+                            providerId: providerId,
+                            amount: (data['price'] is num)
                                 ? (data['price'] as num).toDouble()
                                 : 0.0,
-                            (data['title'] ?? 'service').toString(),
+                            serviceTitle: (data['title'] ?? 'service')
+                                .toString(),
                           ),
-                          child: const Text('Book Service'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF0F766E),
+                            foregroundColor: Colors.white,
+                          ),
+                          icon: const Icon(Icons.event_available),
+                          label: const Text('Book Service'),
                         ),
                         const SizedBox(height: 8),
-                        OutlinedButton(
-                          onPressed: () => _createRequest(
-                            context,
-                            serviceId,
-                            providerId,
-                            (data['title'] ?? 'service').toString(),
+                        OutlinedButton.icon(
+                          onPressed: () => _showServiceActionSheet(
+                            context: context,
+                            isBooking: false,
+                            serviceId: serviceId,
+                            providerId: providerId,
+                            amount: (data['price'] is num)
+                                ? (data['price'] as num).toDouble()
+                                : 0.0,
+                            serviceTitle: (data['title'] ?? 'service')
+                                .toString(),
                           ),
-                          child: const Text('Create Request'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFB45309),
+                            side: const BorderSide(color: Color(0xFFB45309)),
+                          ),
+                          icon: const Icon(Icons.question_answer_outlined),
+                          label: const Text('Create Request'),
                         ),
                       ],
                     );

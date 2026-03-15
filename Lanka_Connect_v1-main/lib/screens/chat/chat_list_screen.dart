@@ -7,6 +7,8 @@ import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
 import '../../utils/firestore_refs.dart';
+import '../../utils/presence_service.dart';
+import '../../utils/profile_identity.dart';
 import '../../utils/user_roles.dart';
 import 'chat_screen.dart';
 import '../../widgets/shimmer_loading.dart';
@@ -113,16 +115,19 @@ class ChatListScreen extends StatelessWidget {
                           .doc(otherPartyId)
                           .snapshots(),
                       builder: (context, userSnap) {
-                        final otherName =
-                            userSnap.data?.data()?['displayName']?.toString() ??
-                            userSnap.data?.data()?['name']?.toString() ??
-                            (role == UserRoles.provider
-                                ? 'Seeker'
-                                : 'Provider');
+                        final userData = userSnap.data?.data();
+                        final otherName = ProfileIdentity.displayNameFrom(
+                          userData,
+                          fallback: role == UserRoles.provider
+                              ? 'Seeker'
+                              : 'Provider',
+                        );
                         final trimmedOtherName = otherName.trim();
                         final avatarInitial = trimmedOtherName.isNotEmpty
                             ? trimmedOtherName[0].toUpperCase()
                             : '?';
+                        final online = PresenceService.isOnline(userData);
+                        final statusLabel = PresenceService.statusLabel(userData);
 
                         return Card(
                           margin: const EdgeInsets.symmetric(
@@ -165,7 +170,34 @@ class ChatListScreen extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const SizedBox(height: 2),
-                                Text(otherName),
+                                Row(
+                                  children: [
+                                    Text(otherName),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      width: 8,
+                                      height: 8,
+                                      decoration: BoxDecoration(
+                                        color: online
+                                            ? const Color(0xFF22C55E)
+                                            : Theme.of(context)
+                                                  .colorScheme
+                                                  .outline,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        statusLabel,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                                 const SizedBox(height: 4),
                                 MobileStatusChip(
                                   label: status,

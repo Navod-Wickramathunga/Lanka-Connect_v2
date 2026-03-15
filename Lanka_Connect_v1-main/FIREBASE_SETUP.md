@@ -133,17 +133,63 @@ Configured ports:
 
 Do not commit sensitive Firebase config files to public repos.
 
-## Google Maps Checklist
+## Google Maps Key Restrictions (Android + Web + iOS)
 
-For Android map rendering issues (blank tiles/no map), verify:
+Use this checklist when map tiles are blank/gray or Maps requests are denied.
 
-1. **Maps SDK for Android** is enabled in Google Cloud.
-2. **Billing** is enabled for the project.
-3. API key restrictions include:
-   - Application restriction: Android app
-   - Package: `com.example.lanka_connect`
-   - Correct SHA-1 for debug/release keystores
-4. Runtime config files used by the app are:
-   - `android/app/google-services.json`
-   - `lib/firebase_options.dart`
-5. `.firebase_templates/*` files are templates only and not runtime sources.
+### Active runtime key injection points
+
+- Android: `android/app/src/main/AndroidManifest.xml` (`com.google.android.geo.API_KEY`)
+- iOS: `ios/Runner/AppDelegate.swift` (`GMSServices.provideAPIKey(...)`)
+- Web: `web/index.html` (`maps.googleapis.com/maps/api/js?...`)
+
+### Required Google Cloud setup
+
+1. Enable billing for the Google Cloud project that owns the key.
+2. Enable required APIs:
+   - **Maps SDK for Android**
+   - **Maps JavaScript API**
+   - **Maps SDK for iOS** (if iOS map rendering is used)
+
+### Android key restrictions
+
+- Application restriction: **Android apps**
+- Allowed package names:
+  - `com.example.lanka_connect`
+  - `com.example.lanka_connect.staging`
+- SHA-1: include both debug and release keystore fingerprints.
+
+Debug SHA-1 command (PowerShell):
+
+```powershell
+keytool -list -v -alias androiddebugkey -keystore "$env:USERPROFILE\.android\debug.keystore" -storepass android -keypass android | Select-String "SHA1:"
+```
+
+Release SHA-1 command (if signing is configured in `android/keystore.properties`):
+
+```powershell
+keytool -list -v -alias <keyAlias> -keystore <storeFile> -storepass <storePassword> -keypass <keyPassword> | Select-String "SHA1:"
+```
+
+### Web key restrictions
+
+- Application restriction: **HTTP referrers**
+- Allowed referrers:
+  - `http://localhost/*`
+  - `http://127.0.0.1/*`
+  - `https://lankaconnect-app.web.app/*`
+  - `https://new-lanka-connect-app.web.app/*`
+
+### iOS key restrictions
+
+- Application restriction: **iOS apps**
+- Allowed bundle ID:
+  - `com.example.lankaConnect`
+
+### Local preflight command
+
+Run before testing maps on app/web:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/maps_preflight.ps1
+```

@@ -291,18 +291,27 @@ class BookingListScreen extends StatelessWidget {
                     ? (data['amount'] as num).toDouble()
                     : null;
                 final statusColor = _colorForStatus(status);
+                final isTerminalStatus = const [
+                  'completed',
+                  'cancelled',
+                  'rejected',
+                ].contains(status);
                 return Card(
-                  margin: const EdgeInsets.symmetric(
+                  margin: EdgeInsets.symmetric(
                     horizontal: 12,
-                    vertical: 6,
+                    vertical: isTerminalStatus ? 3 : 6,
                   ),
-                  elevation: 2,
+                  elevation: isTerminalStatus ? 0 : 2,
                   shadowColor: statusColor.withValues(alpha: 0.12),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(
+                      isTerminalStatus ? 10 : 16,
+                    ),
                     side: BorderSide(
-                      color: statusColor.withValues(alpha: 0.25),
-                      width: 1.5,
+                      color: statusColor.withValues(
+                        alpha: isTerminalStatus ? 0.15 : 0.25,
+                      ),
+                      width: isTerminalStatus ? 1 : 1.5,
                     ),
                   ),
                   child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
@@ -329,6 +338,112 @@ class BookingListScreen extends StatelessWidget {
                           ? serviceTitle
                           : 'Service ${_shortId(serviceId)}';
 
+                      // Compact layout for terminal statuses
+                      final isTerminal = const [
+                        'completed',
+                        'cancelled',
+                        'rejected',
+                      ].contains(status);
+
+                      if (isTerminal) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _iconForStatus(status),
+                                size: 18,
+                                color: statusColor,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      readableTitle,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Row(
+                                      children: [
+                                        if (category.isNotEmpty) ...[
+                                          Text(
+                                            category,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                          if (amount != null)
+                                            Text(
+                                              '  •  ',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurfaceVariant,
+                                              ),
+                                            ),
+                                        ],
+                                        if (amount != null)
+                                          Text(
+                                            'LKR ${amount.toStringAsFixed(0)}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // Review button or reviewed badge for completed
+                              if (status == 'completed' &&
+                                  isSeekerLike &&
+                                  data['reviewed'] != true)
+                                _actionChip(
+                                  context: context,
+                                  icon: Icons.rate_review,
+                                  label: 'Review',
+                                  color: DesignTokens.brandSecondary,
+                                  onTap: () => Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => ReviewFormScreen(
+                                        bookingId: doc.id,
+                                        serviceId: (data['serviceId'] ?? '')
+                                            .toString(),
+                                        providerId: (data['providerId'] ?? '')
+                                            .toString(),
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              else
+                                _enhancedStatusBadge(status),
+                            ],
+                          ),
+                        );
+                      }
+
+                      // Full layout for active statuses (pending, accepted)
                       return Padding(
                         padding: const EdgeInsets.all(14),
                         child: Column(
@@ -485,60 +600,6 @@ class BookingListScreen extends StatelessWidget {
                                       doc.id,
                                       (data['seekerId'] ?? '').toString(),
                                       (data['providerId'] ?? '').toString(),
-                                    ),
-                                  ),
-                                if (isSeekerLike &&
-                                    status == 'completed' &&
-                                    data['reviewed'] != true)
-                                  _actionChip(
-                                    context: context,
-                                    icon: Icons.rate_review,
-                                    label: 'Review',
-                                    color: DesignTokens.brandSecondary,
-                                    onTap: () => Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) => ReviewFormScreen(
-                                          bookingId: doc.id,
-                                          serviceId: (data['serviceId'] ?? '')
-                                              .toString(),
-                                          providerId: (data['providerId'] ?? '')
-                                              .toString(),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                if (isSeekerLike &&
-                                    status == 'completed' &&
-                                    data['reviewed'] == true)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 6,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(
-                                        0xFF22C55E,
-                                      ).withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          Icons.check_circle,
-                                          size: 14,
-                                          color: const Color(0xFF22C55E),
-                                        ),
-                                        const SizedBox(width: 4),
-                                        const Text(
-                                          'Reviewed',
-                                          style: TextStyle(
-                                            color: Color(0xFF22C55E),
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
                                     ),
                                   ),
                               ],

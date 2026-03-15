@@ -6,6 +6,7 @@ import '../../ui/mobile/mobile_components.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
+import '../../utils/app_feedback.dart';
 import '../../utils/display_name_utils.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
@@ -59,6 +60,13 @@ class RequestListScreen extends StatelessWidget {
           'amount': amount,
           'status': 'accepted',
           'fromRequestId': requestId,
+          'notes': (requestData['notes'] ?? '').toString(),
+          if (requestData['scheduledDate'] is Timestamp)
+            'scheduledDate': requestData['scheduledDate'],
+          if ((requestData['scheduledDateKey'] ?? '').toString().isNotEmpty)
+            'scheduledDateKey': requestData['scheduledDateKey'],
+          if ((requestData['timeWindow'] ?? '').toString().isNotEmpty)
+            'timeWindow': requestData['timeWindow'],
           'createdAt': FieldValue.serverTimestamp(),
         });
 
@@ -94,6 +102,15 @@ class RequestListScreen extends StatelessWidget {
           'seekerId': seekerId,
         },
       );
+      if (context.mounted) {
+        TigerFeedback.show(
+          context,
+          status == 'accepted'
+              ? 'Tiger approved the request and created a booking.'
+              : 'Tiger marked the request as $status.',
+          tone: TigerFeedbackTone.success,
+        );
+      }
     } on FirebaseException catch (e, st) {
       FirestoreErrorHandler.logWriteError(
         operation: 'request_update_status',

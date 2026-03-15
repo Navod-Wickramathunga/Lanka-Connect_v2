@@ -34,9 +34,21 @@ class ServiceEditorForm extends StatefulWidget {
 }
 
 class _ServiceEditorFormState extends State<ServiceEditorForm> {
+  static const List<String> _categories = [
+    'Cleaning',
+    'Plumbing',
+    'Electrical',
+    'Carpentry',
+    'Painting',
+    'Gardening',
+    'Moving',
+    'Beauty',
+    'Tutoring',
+  ];
+
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
-  final _categoryController = TextEditingController();
+  String? _selectedCategory;
   final _priceController = TextEditingController();
   final _districtController = TextEditingController();
   final _cityController = TextEditingController();
@@ -61,7 +73,6 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
   @override
   void dispose() {
     _titleController.dispose();
-    _categoryController.dispose();
     _priceController.dispose();
     _districtController.dispose();
     _cityController.dispose();
@@ -74,7 +85,8 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
   void _prefillFromInitialData() {
     final data = widget.initialData ?? const <String, dynamic>{};
     _titleController.text = (data['title'] ?? '').toString();
-    _categoryController.text = (data['category'] ?? '').toString();
+    final cat = (data['category'] ?? '').toString();
+    _selectedCategory = _categories.contains(cat) ? cat : null;
     final rawPrice = data['price'];
     if (rawPrice is num) {
       _priceController.text = rawPrice.toString();
@@ -185,7 +197,7 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
       final payload = <String, dynamic>{
         'providerId': user.uid,
         'title': _titleController.text.trim(),
-        'category': _categoryController.text.trim(),
+        'category': _selectedCategory ?? '',
         'price': double.tryParse(_priceController.text.trim()) ?? 0,
         'district': district,
         'city': city,
@@ -282,7 +294,9 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
       }
 
       final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       );
       _latController.text = pos.latitude.toStringAsFixed(6);
       _lngController.text = pos.longitude.toStringAsFixed(6);
@@ -316,12 +330,16 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
                   Validators.requiredField(value, 'Title required'),
             ),
             const SizedBox(height: 12),
-            TextFormField(
+            DropdownButtonFormField<String>(
               key: const Key('service_editor_field_category'),
-              controller: _categoryController,
+              value: _selectedCategory,
               decoration: const InputDecoration(labelText: 'Category'),
+              items: _categories
+                  .map((cat) => DropdownMenuItem(value: cat, child: Text(cat)))
+                  .toList(),
+              onChanged: (value) => setState(() => _selectedCategory = value),
               validator: (value) =>
-                  Validators.requiredField(value, 'Category required'),
+                  value == null || value.isEmpty ? 'Category required' : null,
             ),
             const SizedBox(height: 12),
             TextFormField(
@@ -395,9 +413,7 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
                       )
                     : const Icon(Icons.my_location),
                 label: Text(
-                  _fillingLocation
-                      ? 'Locating...'
-                      : 'Use current location',
+                  _fillingLocation ? 'Locating...' : 'Use current location',
                 ),
               ),
             ),

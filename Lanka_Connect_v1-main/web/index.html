@@ -33,8 +33,13 @@
   <title>lanka_connect</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- Google Maps API key for Web – restrict in Cloud Console:
-       Application restrictions → HTTP referrers → yourdomain.com/* -->
+  <!-- Google Maps API key for Web - restrict in Cloud Console:
+       Application restriction: HTTP referrers
+       Allowed referrers:
+       - http://localhost/*
+       - http://127.0.0.1/*
+       - https://lankaconnect-app.web.app/*
+       - https://new-lanka-connect-app.web.app/* -->
   <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD2s5z8otGluh1i_fCXi-8GiUNtv9Pmk18"></script>
 </head>
 <body>

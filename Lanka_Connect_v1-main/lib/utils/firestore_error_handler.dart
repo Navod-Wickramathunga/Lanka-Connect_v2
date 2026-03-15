@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'app_logger.dart';
+import 'app_feedback.dart';
 
 class FirestoreErrorHandler {
   static String toUserMessageForOperation(Object error, {String? operation}) {
@@ -44,9 +45,11 @@ class FirestoreErrorHandler {
   }
 
   static void showError(BuildContext context, String message) {
-    ScaffoldMessenger.of(
+    TigerFeedback.show(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      message,
+      tone: TigerFeedbackTone.error,
+    );
   }
 
   static void showSignInRequired(BuildContext context) {
