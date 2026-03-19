@@ -20,6 +20,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $repoRoot
 
 Write-Host "`n=== Lanka Connect: Cloud Functions Deployment ===" -ForegroundColor Cyan
 Write-Host "Target Firebase alias: $ProjectAlias" -ForegroundColor Cyan

@@ -7,6 +7,7 @@ import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/theme/design_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
+import '../../utils/app_feedback.dart';
 import '../../utils/display_name_utils.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
@@ -95,14 +96,15 @@ class BookingListScreen extends StatelessWidget {
   ) async {
     try {
       await FirestoreRefs.bookings().doc(bookingId).update({'status': status});
-      await NotificationService.createMany(
+      if (!context.mounted) return;
+      await NotificationService.createManySafe(
         recipientIds: [seekerId, providerId],
         title: 'Booking status updated',
         body: 'Your booking has been updated to $status.',
         type: 'booking',
         data: {'bookingId': bookingId, 'status': status},
       );
-      await NotificationService.notifyAdmins(
+      await NotificationService.notifyAdminsSafe(
         title: 'Booking status changed',
         body: 'A booking status was changed to $status.',
         data: {
@@ -111,6 +113,16 @@ class BookingListScreen extends StatelessWidget {
           'providerId': providerId,
           'seekerId': seekerId,
         },
+      );
+      if (!context.mounted) return;
+      TigerFeedback.show(
+        context,
+        status == 'cancelled'
+            ? 'Booking cancelled.'
+            : 'Booking marked as $status.',
+        tone: status == 'cancelled'
+            ? TigerFeedbackTone.warning
+            : TigerFeedbackTone.success,
       );
     } on FirebaseException catch (e, st) {
       FirestoreErrorHandler.logWriteError(
@@ -297,6 +309,7 @@ class BookingListScreen extends StatelessWidget {
                   'rejected',
                 ].contains(status);
                 return Card(
+                  key: ValueKey(doc.id),
                   margin: EdgeInsets.symmetric(
                     horizontal: 12,
                     vertical: isTerminalStatus ? 3 : 6,

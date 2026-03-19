@@ -54,6 +54,29 @@ class NotificationService {
     }
   }
 
+  static Future<void> createManySafe({
+    required List<String> recipientIds,
+    required String title,
+    required String body,
+    String type = 'general',
+    Map<String, dynamic> data = const {},
+    bool excludeSender = false,
+  }) async {
+    try {
+      await createMany(
+        recipientIds: recipientIds,
+        title: title,
+        body: body,
+        type: type,
+        data: data,
+        excludeSender: excludeSender,
+      );
+    } catch (e, st) {
+      debugPrint('Notification createManySafe suppressed: $e');
+      debugPrint(st.toString());
+    }
+  }
+
   static Future<void> create({
     required String recipientId,
     required String title,
@@ -87,6 +110,27 @@ class NotificationService {
     }
   }
 
+  static Future<void> createSafe({
+    required String recipientId,
+    required String title,
+    required String body,
+    String type = 'general',
+    Map<String, dynamic> data = const {},
+  }) async {
+    try {
+      await create(
+        recipientId: recipientId,
+        title: title,
+        body: body,
+        type: type,
+        data: data,
+      );
+    } catch (e, st) {
+      debugPrint('Notification createSafe suppressed: $e');
+      debugPrint(st.toString());
+    }
+  }
+
   static Future<void> notifyAdmins({
     required String title,
     required String body,
@@ -94,6 +138,21 @@ class NotificationService {
     Map<String, dynamic> data = const {},
   }) async {
     await create(
+      recipientId: adminChannelRecipientId,
+      title: title,
+      body: body,
+      type: type,
+      data: data,
+    );
+  }
+
+  static Future<void> notifyAdminsSafe({
+    required String title,
+    required String body,
+    String type = 'admin_event',
+    Map<String, dynamic> data = const {},
+  }) async {
+    await createSafe(
       recipientId: adminChannelRecipientId,
       title: title,
       body: body,

@@ -164,6 +164,25 @@ class ServiceDetailScreen extends StatelessWidget {
     );
   }
 
+  Stream<QuerySnapshot<Map<String, dynamic>>> _providerBookingsOnDate(
+    String providerId,
+    String scheduledDateKey,
+  ) {
+    return FirestoreRefs.bookings()
+        .where('providerId', isEqualTo: providerId)
+        .where('scheduledDateKey', isEqualTo: scheduledDateKey)
+        .snapshots();
+  }
+
+  int _activeBookingCount(
+    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    return docs.where((doc) {
+      final status = (doc.data()['status'] ?? '').toString().toLowerCase();
+      return status == 'pending' || status == 'accepted';
+    }).length;
+  }
+
   Future<void> _createBooking(
     BuildContext context,
     String serviceId,
@@ -196,7 +215,7 @@ class ServiceDetailScreen extends StatelessWidget {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      await NotificationService.createMany(
+      await NotificationService.createManySafe(
         recipientIds: [providerId, user.uid],
         title: 'Booking request created',
         body: 'Booking request for "$serviceTitle" is pending provider action.',
@@ -209,7 +228,7 @@ class ServiceDetailScreen extends StatelessWidget {
           'status': 'pending',
         },
       );
-      await NotificationService.notifyAdmins(
+      await NotificationService.notifyAdminsSafe(
         title: 'New booking request',
         body: 'A new booking request was created for "$serviceTitle".',
         data: {
@@ -270,7 +289,7 @@ class ServiceDetailScreen extends StatelessWidget {
     String providerId,
     String serviceTitle,
     DateTime? scheduledDate,
-    String timeWindow,
+    String? requestedTimeLabel,
     String notes,
   ) async {
     final user = FirebaseAuth.instance.currentUser;
@@ -290,11 +309,12 @@ class ServiceDetailScreen extends StatelessWidget {
           'scheduledDate': Timestamp.fromDate(scheduledDate),
         if (scheduledDate != null)
           'scheduledDateKey': DateFormat('yyyy-MM-dd').format(scheduledDate),
-        if (timeWindow.trim().isNotEmpty) 'timeWindow': timeWindow,
+        if ((requestedTimeLabel ?? '').trim().isNotEmpty)
+          'requestedTimeLabel': requestedTimeLabel,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      await NotificationService.createMany(
+      await NotificationService.createManySafe(
         recipientIds: [providerId, user.uid],
         title: 'Service request created',
         body: 'A request for "$serviceTitle" is now pending provider action.',
@@ -307,7 +327,7 @@ class ServiceDetailScreen extends StatelessWidget {
           'status': 'pending',
         },
       );
-      await NotificationService.notifyAdmins(
+      await NotificationService.notifyAdminsSafe(
         title: 'New service request',
         body: 'A new service request was created for "$serviceTitle".',
         data: {
@@ -373,230 +393,262 @@ class ServiceDetailScreen extends StatelessWidget {
     final notesController = TextEditingController();
     DateTime? selectedDate;
     String selectedWindow = 'Flexible';
+    TimeOfDay? selectedTime;
 
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final selectedDateKey = selectedDate == null
-                ? null
-                : DateFormat('yyyy-MM-dd').format(selectedDate!);
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (sheetContext) {
+          return StatefulBuilder(
+            builder: (innerCtx, setModalState) {
+              final selectedDateKey = selectedDate == null
+                  ? null
+                  : DateFormat('yyyy-MM-dd').format(selectedDate!);
 
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                8,
-                16,
-                MediaQuery.of(context).viewInsets.bottom + 16,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      isBooking ? 'Book Service' : 'Create Request',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      isBooking
-                          ? 'Booking keeps the listed price and sends a direct schedule request to the provider.'
-                          : 'Request lets you explain your needs first. The provider reviews it and may create a booking after approval.',
-                    ),
-                    const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        final now = DateTime.now();
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: selectedDate ?? now,
-                          firstDate: now,
-                          lastDate: now.add(const Duration(days: 90)),
-                        );
-                        if (picked == null) return;
-                        setModalState(() => selectedDate = picked);
-                      },
-                      icon: const Icon(Icons.calendar_today),
-                      label: Text(
-                        selectedDate == null
-                            ? 'Select preferred date'
-                            : DateFormat(
-                                'EEE, dd MMM yyyy',
-                              ).format(selectedDate!),
+              return Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  16,
+                  MediaQuery.of(innerCtx).viewInsets.bottom + 16,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        isBooking ? 'Book Service' : 'Create Request',
+                        style: Theme.of(innerCtx).textTheme.titleLarge,
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      value: selectedWindow,
-                      decoration: const InputDecoration(
-                        labelText: 'Preferred time window',
+                      const SizedBox(height: 8),
+                      Text(
+                        isBooking
+                            ? 'Book the service now and share the day plus your preferred time window.'
+                            : 'Send a request with the exact date and time you want, then wait for provider approval.',
                       ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'Morning',
-                          child: Text('Morning'),
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final now = DateTime.now();
+                          final picked = await showDatePicker(
+                            context: innerCtx,
+                            initialDate: selectedDate ?? now,
+                            firstDate: now,
+                            lastDate: now.add(const Duration(days: 90)),
+                          );
+                          if (picked == null) return;
+                          setModalState(() => selectedDate = picked);
+                        },
+                        icon: const Icon(Icons.calendar_today),
+                        label: Text(
+                          selectedDate == null
+                              ? (isBooking
+                                    ? 'Select preferred date'
+                                    : 'Select requested date')
+                              : DateFormat(
+                                  'EEE, dd MMM yyyy',
+                                ).format(selectedDate!),
                         ),
-                        DropdownMenuItem(
-                          value: 'Afternoon',
-                          child: Text('Afternoon'),
+                      ),
+                      const SizedBox(height: 12),
+                      if (isBooking)
+                        DropdownButtonFormField<String>(
+                          value: selectedWindow,
+                          decoration: const InputDecoration(
+                            labelText: 'Preferred time window',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'Morning',
+                              child: Text('Morning'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Afternoon',
+                              child: Text('Afternoon'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Evening',
+                              child: Text('Evening'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Flexible',
+                              child: Text('Flexible'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            setModalState(
+                              () => selectedWindow = value ?? 'Flexible',
+                            );
+                          },
+                        )
+                      else
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            final picked = await showTimePicker(
+                              context: innerCtx,
+                              initialTime: selectedTime ?? TimeOfDay.now(),
+                            );
+                            if (picked == null) return;
+                            setModalState(() => selectedTime = picked);
+                          },
+                          icon: const Icon(Icons.schedule),
+                          label: Text(
+                            selectedTime == null
+                                ? 'Select requested time'
+                                : MaterialLocalizations.of(
+                                    innerCtx,
+                                  ).formatTimeOfDay(selectedTime!),
+                          ),
                         ),
-                        DropdownMenuItem(
-                          value: 'Evening',
-                          child: Text('Evening'),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: notesController,
+                        maxLines: 3,
+                        decoration: InputDecoration(
+                          labelText: isBooking
+                              ? 'Booking notes'
+                              : 'Explain your request',
+                          hintText: isBooking
+                              ? 'Gate number, materials, special instructions...'
+                              : 'Tell the provider what you need done before they approve.',
                         ),
-                        DropdownMenuItem(
-                          value: 'Flexible',
-                          child: Text('Flexible'),
+                      ),
+                      if (selectedDateKey != null) ...[
+                        const SizedBox(height: 12),
+                        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                          stream: _providerBookingsOnDate(
+                            providerId,
+                            selectedDateKey,
+                          ),
+                          builder: (context, snapshot) {
+                            final scheme = Theme.of(context).colorScheme;
+                            final hasError = snapshot.hasError;
+                            final busyCount = hasError
+                                ? 0
+                                : _activeBookingCount(snapshot.data?.docs ?? []);
+                            final isAvailable = !hasError && busyCount == 0;
+                            final isDark =
+                                Theme.of(context).brightness == Brightness.dark;
+                            final background = hasError
+                                ? scheme.surfaceContainerHighest
+                                : isAvailable
+                                ? (isDark
+                                      ? const Color(0xFF052E2B)
+                                      : const Color(0xFFECFDF5))
+                                : (isDark
+                                      ? const Color(0xFF3F2A08)
+                                      : const Color(0xFFFFF7ED));
+                            final border = hasError
+                                ? scheme.outlineVariant
+                                : isAvailable
+                                ? const Color(0xFF10B981)
+                                : const Color(0xFFF59E0B);
+                            final foreground = hasError
+                                ? scheme.onSurface
+                                : isAvailable
+                                ? (isDark
+                                      ? const Color(0xFFA7F3D0)
+                                      : const Color(0xFF047857))
+                                : (isDark
+                                      ? const Color(0xFFFDE68A)
+                                      : const Color(0xFFB45309));
+                            final message = hasError
+                                ? 'Provider availability could not be loaded. You can still send the booking or request.'
+                                : isAvailable
+                                ? 'Provider looks free on the selected date.'
+                                : 'Provider already has $busyCount active job(s) on this date.';
+
+                            return Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: background,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: border),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    hasError
+                                        ? Icons.info_outline
+                                        : isAvailable
+                                        ? Icons.check_circle_outline
+                                        : Icons.schedule,
+                                    color: foreground,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      message,
+                                      style: TextStyle(
+                                        color: foreground,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                       ],
-                      onChanged: (value) {
-                        setModalState(
-                          () => selectedWindow = value ?? 'Flexible',
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: notesController,
-                      maxLines: 3,
-                      decoration: InputDecoration(
-                        labelText: isBooking
-                            ? 'Booking notes'
-                            : 'Explain your request',
-                        hintText: isBooking
-                            ? 'Gate number, materials, special instructions...'
-                            : 'Tell the provider what you need done before they approve.',
-                      ),
-                    ),
-                    if (selectedDateKey != null) ...[
-                      const SizedBox(height: 12),
-                      StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                        stream: FirestoreRefs.bookings()
-                            .where('providerId', isEqualTo: providerId)
-                            .where(
-                              'scheduledDateKey',
-                              isEqualTo: selectedDateKey,
-                            )
-                            .where(
-                              'status',
-                              whereIn: const ['pending', 'accepted'],
-                            )
-                            .snapshots(),
-                        builder: (context, snapshot) {
-                          final busyCount = snapshot.data?.docs.length ?? 0;
-                          final isAvailable = busyCount == 0;
-                          return Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: isAvailable
-                                  ? const Color(0xFFECFDF5)
-                                  : const Color(0xFFFFF7ED),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: isAvailable
-                                    ? const Color(0xFFA7F3D0)
-                                    : const Color(0xFFFED7AA),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  isAvailable
-                                      ? Icons.check_circle_outline
-                                      : Icons.schedule,
-                                  color: isAvailable
-                                      ? const Color(0xFF047857)
-                                      : const Color(0xFFC2410C),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(
-                                    isAvailable
-                                        ? 'Provider looks free on the selected date.'
-                                        : 'Provider already has $busyCount active job(s) on this date.',
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
+                      const SizedBox(height: 18),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () async {
+                            final notes = notesController.text.trim();
+                            final date = selectedDate;
+                            final requestedTimeLabel = selectedTime == null
+                                ? null
+                                : MaterialLocalizations.of(
+                                    innerCtx,
+                                  ).formatTimeOfDay(selectedTime!);
+                            Navigator.of(innerCtx).pop();
+                            if (isBooking) {
+                              await _createBooking(
+                                context,
+                                serviceId,
+                                providerId,
+                                amount,
+                                serviceTitle,
+                                date,
+                                selectedWindow,
+                                notes,
+                              );
+                            } else {
+                              await _createRequest(
+                                context,
+                                serviceId,
+                                providerId,
+                                serviceTitle,
+                                date,
+                                requestedTimeLabel,
+                                notes,
+                              );
+                            }
+                          },
+                          icon: Icon(
+                            isBooking ? Icons.event_available : Icons.send,
+                          ),
+                          label: Text(
+                            isBooking ? 'Confirm Booking' : 'Send Request',
+                          ),
+                        ),
                       ),
                     ],
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: () async {
-                          if (isBooking && selectedDateKey != null) {
-                            final conflict = await FirestoreRefs.bookings()
-                                .where('providerId', isEqualTo: providerId)
-                                .where(
-                                  'scheduledDateKey',
-                                  isEqualTo: selectedDateKey,
-                                )
-                                .where(
-                                  'status',
-                                  whereIn: const ['pending', 'accepted'],
-                                )
-                                .limit(1)
-                                .get();
-                            if (conflict.docs.isNotEmpty) {
-                              if (context.mounted) {
-                                TigerFeedback.show(
-                                  context,
-                                  'Tiger says: pick another date for booking.',
-                                  tone: TigerFeedbackTone.warning,
-                                );
-                              }
-                              return;
-                            }
-                          }
-
-                          Navigator.of(context).pop();
-                          if (isBooking) {
-                            await _createBooking(
-                              context,
-                              serviceId,
-                              providerId,
-                              amount,
-                              serviceTitle,
-                              selectedDate,
-                              selectedWindow,
-                              notesController.text.trim(),
-                            );
-                          } else {
-                            await _createRequest(
-                              context,
-                              serviceId,
-                              providerId,
-                              serviceTitle,
-                              selectedDate,
-                              selectedWindow,
-                              notesController.text.trim(),
-                            );
-                          }
-                        },
-                        icon: Icon(
-                          isBooking ? Icons.event_available : Icons.send,
-                        ),
-                        label: Text(
-                          isBooking ? 'Confirm Booking' : 'Send Request',
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            );
-          },
-        );
-      },
-    );
-    notesController.dispose();
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      notesController.dispose();
+    }
   }
 
   Widget _buildFlowGuideCard(BuildContext context) {
@@ -975,7 +1027,7 @@ class ServiceDetailScreen extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
-                        '${imageUrls.length} photos — swipe to browse',
+                        '${imageUrls.length} photos - swipe to browse',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),

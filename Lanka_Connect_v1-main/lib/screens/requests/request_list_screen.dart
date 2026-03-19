@@ -26,6 +26,120 @@ class RequestListScreen extends StatelessWidget {
     return value.substring(0, take);
   }
 
+  Future<void> _showRequestDetails({
+    required BuildContext context,
+    required String requestId,
+    required String seekerId,
+    required String providerId,
+    required Map<String, dynamic> requestData,
+    required String serviceTitle,
+    required String category,
+    required String location,
+    required String seekerName,
+    required String createdLabel,
+    required String amountLabel,
+  }) async {
+    final notes = (requestData['notes'] ?? '').toString().trim();
+    final timeWindow = (requestData['timeWindow'] ?? '').toString().trim();
+    final requestedTimeLabel = (requestData['requestedTimeLabel'] ?? '')
+        .toString()
+        .trim();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  serviceTitle,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (category.isNotEmpty) Chip(label: Text(category)),
+                    if (location.isNotEmpty) Chip(label: Text(location)),
+                    if (amountLabel.isNotEmpty) Chip(label: Text(amountLabel)),
+                    if (createdLabel.isNotEmpty)
+                      Chip(label: Text(createdLabel)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text('From: $seekerName'),
+                if (timeWindow.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text('Time window: $timeWindow'),
+                ],
+                if (requestedTimeLabel.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text('Requested time: $requestedTimeLabel'),
+                ],
+                if (notes.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(notes, style: Theme.of(context).textTheme.bodyMedium),
+                ],
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        icon: const Icon(Icons.check, size: 18),
+                        label: const Text('Accept'),
+                        onPressed: () async {
+                          Navigator.of(sheetContext).pop();
+                          await _updateStatus(
+                            context,
+                            requestId,
+                            'accepted',
+                            seekerId,
+                            providerId,
+                            requestData,
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.close, size: 18),
+                        label: const Text('Reject'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                        ),
+                        onPressed: () async {
+                          Navigator.of(sheetContext).pop();
+                          await _updateStatus(
+                            context,
+                            requestId,
+                            'rejected',
+                            seekerId,
+                            providerId,
+                            requestData,
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _updateStatus(
     BuildContext context,
     String requestId,
@@ -67,12 +181,14 @@ class RequestListScreen extends StatelessWidget {
             'scheduledDateKey': requestData['scheduledDateKey'],
           if ((requestData['timeWindow'] ?? '').toString().isNotEmpty)
             'timeWindow': requestData['timeWindow'],
+          if ((requestData['requestedTimeLabel'] ?? '').toString().isNotEmpty)
+            'requestedTimeLabel': requestData['requestedTimeLabel'],
           'createdAt': FieldValue.serverTimestamp(),
         });
 
-        await NotificationService.createMany(
+        await NotificationService.createManySafe(
           recipientIds: [seekerId, providerId],
-          title: 'Request accepted — booking created',
+          title: 'Request accepted - booking created',
           body:
               'Your service request has been accepted. A booking has been created.',
           type: 'booking',
@@ -83,7 +199,7 @@ class RequestListScreen extends StatelessWidget {
           },
         );
       } else {
-        await NotificationService.createMany(
+        await NotificationService.createManySafe(
           recipientIds: [seekerId, providerId],
           title: 'Service request $status',
           body: 'Your service request has been $status.',
@@ -92,7 +208,7 @@ class RequestListScreen extends StatelessWidget {
         );
       }
 
-      await NotificationService.notifyAdmins(
+      await NotificationService.notifyAdminsSafe(
         title: 'Request $status',
         body: 'A service request was $status by the provider.',
         data: {
@@ -242,80 +358,50 @@ class RequestListScreen extends StatelessWidget {
                     if (timeAgo.isNotEmpty) timeAgo,
                   ];
 
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8,
-                      horizontal: 12,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
+                  return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: FirestoreRefs.users().doc(seekerId).snapshots(),
+                    builder: (context, seekerSnap) {
+                      final seekerName =
+                          seekerSnap.data?.data()?['displayName']?.toString() ??
+                          seekerSnap.data?.data()?['name']?.toString() ??
+                          'Seeker';
+
+                      return ListTile(
+                        onTap: () => _showRequestDetails(
+                          context: context,
+                          requestId: doc.id,
+                          seekerId: seekerId,
+                          providerId: providerId,
+                          requestData: data,
+                          serviceTitle: readableTitle,
+                          category: category,
+                          location: location,
+                          seekerName: seekerName,
+                          createdLabel: timeAgo,
+                          amountLabel: amount == null
+                              ? ''
+                              : 'LKR ${amount.toStringAsFixed(0)}',
+                        ),
+                        leading: const CircleAvatar(
+                          child: Icon(Icons.assignment_outlined),
+                        ),
+                        title: Text(
                           readableTitle,
-                          style: Theme.of(context).textTheme.titleMedium,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        if (subtitleParts.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            subtitleParts.join(' · '),
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                        // Seeker name
-                        StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                          stream: FirestoreRefs.users()
-                              .doc(seekerId)
-                              .snapshots(),
-                          builder: (context, seekerSnap) {
-                            final seekerName =
-                                seekerSnap.data?.data()?['displayName'] ??
-                                'Seeker';
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                'From: $seekerName',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            );
-                          },
+                        subtitle: Text(
+                          [
+                            if (subtitleParts.isNotEmpty)
+                              subtitleParts.join(' - '),
+                            'From: $seekerName',
+                          ].join(' | '),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            const SizedBox(width: 8),
-                            FilledButton.icon(
-                              icon: const Icon(Icons.check, size: 18),
-                              label: const Text('Accept'),
-                              onPressed: () => _updateStatus(
-                                context,
-                                doc.id,
-                                'accepted',
-                                seekerId,
-                                providerId,
-                                data,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            OutlinedButton.icon(
-                              icon: const Icon(Icons.close, size: 18),
-                              label: const Text('Reject'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.red,
-                              ),
-                              onPressed: () => _updateStatus(
-                                context,
-                                doc.id,
-                                'rejected',
-                                seekerId,
-                                providerId,
-                                data,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                        trailing: const Icon(Icons.chevron_right),
+                      );
+                    },
                   );
                 },
               ),

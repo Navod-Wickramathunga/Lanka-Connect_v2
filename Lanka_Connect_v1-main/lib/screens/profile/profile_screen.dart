@@ -25,18 +25,33 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  static const List<String> _providerCategoryOptions = [
+    'Cleaning',
+    'Plumbing',
+    'Electrical',
+    'Carpentry',
+    'Painting',
+    'Gardening',
+    'Moving',
+    'Beauty',
+    'Tutoring',
+    'Other',
+  ];
+
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _contactController = TextEditingController();
   final _districtController = TextEditingController();
   final _cityController = TextEditingController();
-  final _skillsController = TextEditingController();
   final _bioController = TextEditingController();
 
   bool _initialized = false;
   bool _saving = false;
   String _role = UserRoles.seeker;
   String _imageUrl = '';
+  String? _primaryCategory;
+  final Set<String> _selectedSkills = <String>{};
+  String? _skillPickerValue;
 
   @override
   void dispose() {
@@ -44,7 +59,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _contactController.dispose();
     _districtController.dispose();
     _cityController.dispose();
-    _skillsController.dispose();
     _bioController.dispose();
     super.dispose();
   }
@@ -64,11 +78,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
 
     try {
-      final skills = _skillsController.text
-          .split(',')
-          .map((item) => item.trim())
-          .where((item) => item.isNotEmpty)
-          .toList();
+      final skills = _selectedSkills.toList()..sort();
 
       await FirestoreRefs.users().doc(user.uid).set({
         'name': _nameController.text.trim(),
@@ -76,6 +86,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'district': _districtController.text.trim(),
         'city': _cityController.text.trim(),
         'skills': skills,
+        'primaryCategory': (_primaryCategory ?? '').trim(),
         'bio': _bioController.text.trim(),
         'imageUrl': _imageUrl,
         'updatedAt': FieldValue.serverTimestamp(),
@@ -239,7 +250,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _bioController.text = (data['bio'] ?? '').toString();
 
     final skills = List<String>.from(data['skills'] ?? const []);
-    _skillsController.text = skills.join(', ');
+    _selectedSkills
+      ..clear()
+      ..addAll(skills.map((e) => e.trim()).where((e) => e.isNotEmpty));
+    final category = (data['primaryCategory'] ?? '').toString().trim();
+    _primaryCategory = category.isEmpty ? null : category;
+    _skillPickerValue = null;
   }
 
   @override
@@ -337,12 +353,74 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 if (_role == UserRoles.provider) ...[
                   MobileSectionCard(
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        TextFormField(
-                          controller: _skillsController,
+                        DropdownButtonFormField<String>(
+                          key: ValueKey<String?>(_primaryCategory),
+                          initialValue: _primaryCategory,
                           decoration: const InputDecoration(
-                            labelText: 'Skills / categories (comma separated)',
+                            labelText: 'Primary category',
                           ),
+                          items: _providerCategoryOptions
+                              .map(
+                                (category) => DropdownMenuItem<String>(
+                                  value: category,
+                                  child: Text(category),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              _primaryCategory = value;
+                              if (value != null && value.isNotEmpty) {
+                                _selectedSkills.add(value);
+                              }
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          key: ValueKey<int>(_selectedSkills.length),
+                          initialValue: _skillPickerValue,
+                          decoration: const InputDecoration(
+                            labelText: 'Add a skill',
+                          ),
+                          items: _providerCategoryOptions
+                              .where((item) => !_selectedSkills.contains(item))
+                              .map(
+                                (skill) => DropdownMenuItem<String>(
+                                  value: skill,
+                                  child: Text(skill),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            if (value == null || value.isEmpty) return;
+                            setState(() {
+                              _selectedSkills.add(value);
+                              _skillPickerValue = null;
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _selectedSkills
+                              .map(
+                                (skill) => Chip(
+                                  label: Text(skill),
+                                  onDeleted: () {
+                                    setState(() {
+                                      _selectedSkills.remove(skill);
+                                      if (_primaryCategory == skill) {
+                                        _primaryCategory = null;
+                                      }
+                                    });
+                                  },
+                                ),
+                              )
+                              .toList(),
                         ),
                         const SizedBox(height: 12),
                         TextFormField(

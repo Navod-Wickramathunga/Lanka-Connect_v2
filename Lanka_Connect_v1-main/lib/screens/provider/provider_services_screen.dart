@@ -10,7 +10,6 @@ import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/theme/design_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
 import '../../utils/firestore_refs.dart';
-import '../../widgets/animated_icon.dart';
 import '../services/widgets/service_editor_form.dart';
 
 class ProviderServicesScreen extends StatefulWidget {
@@ -231,6 +230,125 @@ class _ProviderServicesScreenState extends State<ProviderServicesScreen> {
     }
   }
 
+  Future<void> _showServiceDetails({
+    required String serviceId,
+    required Map<String, dynamic> data,
+  }) async {
+    final title = (data['title'] ?? 'Service').toString();
+    final category = (data['category'] ?? '').toString().trim();
+    final city = (data['city'] ?? '').toString().trim();
+    final district = (data['district'] ?? '').toString().trim();
+    final location = (data['location'] ?? '').toString().trim();
+    final description = (data['description'] ?? '').toString().trim();
+    final status = (data['status'] ?? 'pending').toString();
+    final price = (data['price'] is num)
+        ? (data['price'] as num).toDouble()
+        : 0.0;
+    final displayLocation = city.isNotEmpty || district.isNotEmpty
+        ? '$city, $district'
+        : location;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (category.isNotEmpty)
+                      Chip(
+                        avatar: const Icon(Icons.category_outlined, size: 16),
+                        label: Text(category),
+                      ),
+                    Chip(
+                      avatar: const Icon(Icons.payments_outlined, size: 16),
+                      label: Text(
+                        'LKR ${price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2)}',
+                      ),
+                    ),
+                    Chip(
+                      avatar: const Icon(Icons.flag_outlined, size: 16),
+                      label: Text(status),
+                    ),
+                  ],
+                ),
+                if (displayLocation.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 16),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text(displayLocation)),
+                    ],
+                  ),
+                ],
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    description,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _deletingIds.contains(serviceId)
+                            ? null
+                            : () {
+                                Navigator.of(context).pop();
+                                _openEditor(
+                                  serviceId: serviceId,
+                                  initialData: data,
+                                );
+                              },
+                        icon: const Icon(Icons.edit_outlined),
+                        label: const Text('Edit'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _deletingIds.contains(serviceId)
+                            ? null
+                            : () {
+                                Navigator.of(context).pop();
+                                _deleteService(serviceId, data);
+                              },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: DesignTokens.danger,
+                        ),
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Delete'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildList({required String uid, required bool ordered}) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _servicesStream(uid: uid, ordered: ordered),
@@ -254,41 +372,33 @@ class _ProviderServicesScreenState extends State<ProviderServicesScreen> {
           return _emptyPanel();
         }
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final isWide = constraints.maxWidth >= 880;
-            final crossAxisCount = constraints.maxWidth >= 1200
-                ? 3
-                : constraints.maxWidth >= 880
-                ? 2
-                : 1;
-            final grid = GridView.builder(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: crossAxisCount,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: isWide ? 0.95 : 1.15,
-              ),
-              itemCount: docs.length,
-              itemBuilder: (context, index) {
-                final doc = docs[index];
-                final data = doc.data();
-                return _ProviderServiceCard(
-                  serviceId: doc.id,
-                  data: data,
-                  deleting: _deletingIds.contains(doc.id),
-                  onEdit: () =>
-                      _openEditor(serviceId: doc.id, initialData: data),
-                  onDelete: () => _deleteService(doc.id, data),
+        return RefreshIndicator(
+          onRefresh: () async => setState(() {}),
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 120),
+            itemCount: docs.length + 1,
+            itemBuilder: (context, index) {
+              if (index == 0) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: FilledButton.icon(
+                    onPressed: _openEditor,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Create Service'),
+                  ),
                 );
-              },
-            );
-            return RefreshIndicator(
-              onRefresh: () async => setState(() {}),
-              child: grid,
-            );
-          },
+              }
+
+              final doc = docs[index - 1];
+              final data = doc.data();
+              return _ProviderServiceCard(
+                serviceId: doc.id,
+                data: data,
+                deleting: _deletingIds.contains(doc.id),
+                onTap: () => _showServiceDetails(serviceId: doc.id, data: data),
+              );
+            },
+          ),
         );
       },
     );
@@ -357,11 +467,12 @@ class _ProviderServicesScreenState extends State<ProviderServicesScreen> {
         Positioned(
           right: 18,
           bottom: 18,
-          child: FloatingActionButton(
+          child: FloatingActionButton.extended(
             key: const Key('provider_services_fab_add'),
             onPressed: _openEditor,
             backgroundColor: DesignTokens.brandPrimary,
-            child: const Icon(Icons.add, size: 30),
+            icon: const Icon(Icons.add),
+            label: const Text('Create Service'),
           ),
         ),
       ],
@@ -390,15 +501,13 @@ class _ProviderServiceCard extends StatelessWidget {
     required this.serviceId,
     required this.data,
     required this.deleting,
-    required this.onEdit,
-    required this.onDelete,
+    required this.onTap,
   });
 
   final String serviceId;
   final Map<String, dynamic> data;
   final bool deleting;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final VoidCallback onTap;
 
   Color _statusColor(String status) {
     switch (status.toLowerCase()) {
@@ -434,128 +543,65 @@ class _ProviderServiceCard extends StatelessWidget {
 
     return Card(
       key: Key('provider_services_card_$serviceId'),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            height: 140,
-            width: double.infinity,
-            child: images.isNotEmpty
-                ? Image.network(
-                    images.first,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) {
-                      return const ColoredBox(
-                        color: Color(0xFFF1F5F9),
-                        child: Center(child: Icon(Icons.broken_image)),
-                      );
-                    },
-                  )
-                : const ColoredBox(
-                    color: Color(0xFFF1F5F9),
-                    child: Center(child: Icon(Icons.image_not_supported)),
-                  ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      child: ListTile(
+        onTap: deleting ? null : onTap,
+        leading: CircleAvatar(
+          backgroundColor: statusColor.withValues(alpha: 0.12),
+          backgroundImage: images.isNotEmpty
+              ? NetworkImage(images.first)
+              : null,
+          child: images.isEmpty
+              ? Icon(Icons.home_repair_service, color: statusColor)
+              : null,
+        ),
+        title: Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          [
+            if (category.isNotEmpty) category,
+            if (displayLocation.isNotEmpty) displayLocation,
+            'LKR ${price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2)}',
+          ].join(' - '),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: deleting
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                        ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      status,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusColor.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          status,
-                          style: TextStyle(
-                            color: statusColor,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    category,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    displayLocation,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const Spacer(),
-                  Row(
-                    children: [
-                      Text(
-                        'LKR ${price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2)}',
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        key: Key('provider_services_action_edit_$serviceId'),
-                        onPressed: deleting ? null : onEdit,
-                        tooltip: 'Edit',
-                        icon: const AnimatedIconWidget(
-                          icon: Icons.edit_outlined,
-                          animation: IconAnimation.wiggle,
-                          triggerOnTap: true,
-                        ),
-                      ),
-                      IconButton(
-                        key: Key('provider_services_action_delete_$serviceId'),
-                        onPressed: deleting ? null : onDelete,
-                        tooltip: 'Delete',
-                        icon: const AnimatedIconWidget(
-                          icon: Icons.delete_outline,
-                          animation: IconAnimation.shake,
-                          triggerOnTap: true,
-                          color: DesignTokens.danger,
-                        ),
-                      ),
-                      if (deleting)
-                        const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                    ],
-                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.chevron_right),
                 ],
               ),
-            ),
-          ),
-        ],
       ),
     );
   }

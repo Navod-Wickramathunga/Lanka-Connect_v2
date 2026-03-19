@@ -949,6 +949,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: _categoryController.text.trim().isEmpty
                       ? null
                       : _categoryController.text.trim(),
@@ -973,6 +974,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: _districtController.text.trim().isEmpty
                       ? null
                       : _districtController.text.trim(),
@@ -1002,6 +1004,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: _cityController.text.trim().isEmpty
                       ? null
                       : _cityController.text.trim(),

@@ -325,14 +325,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 continue;
               }
               _seenNotificationIds.add(doc.id);
-              final title = (data['title'] ?? 'Notification').toString();
-              final body = (data['body'] ?? '').toString();
-              TigerFeedback.show(
-                context,
-                body.isEmpty ? 'Tiger alert: $title' : 'Tiger alert: $body',
-                tone: TigerFeedbackTone.info,
-              );
-              break;
             }
           },
           onError: (Object error, StackTrace stackTrace) {
@@ -1064,7 +1056,7 @@ class _DrawerQuickStats extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Lanka Connect v1.0',
+            'Lanka Connect v1.1.1',
             style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
           ),
         ],

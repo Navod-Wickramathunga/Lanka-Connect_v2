@@ -175,9 +175,15 @@ class SeekerRequestListScreen extends StatelessWidget {
                   final timeWindow = (data['timeWindow'] ?? '')
                       .toString()
                       .trim();
-                  final scheduledDate = (data['scheduledDate'] ?? '')
+                  final requestedTimeLabel = (data['requestedTimeLabel'] ?? '')
                       .toString()
                       .trim();
+                  final scheduledDateValue = data['scheduledDate'];
+                  final scheduledDate = scheduledDateValue is Timestamp
+                      ? DateFormat(
+                          'EEE, dd MMM yyyy',
+                        ).format(scheduledDateValue.toDate())
+                      : scheduledDateValue.toString().trim();
 
                   return Theme(
                     data: Theme.of(
@@ -205,7 +211,7 @@ class SeekerRequestListScreen extends StatelessWidget {
                             Padding(
                               padding: const EdgeInsets.only(top: 2),
                               child: Text(
-                                subtitleParts.join(' · '),
+                                subtitleParts.join(' - '),
                                 style: Theme.of(context).textTheme.bodySmall,
                               ),
                             ),
@@ -240,6 +246,13 @@ class SeekerRequestListScreen extends StatelessWidget {
                             Icons.schedule,
                             'Time window',
                             timeWindow,
+                          ),
+                        if (requestedTimeLabel.isNotEmpty)
+                          _detailRow(
+                            context,
+                            Icons.access_time,
+                            'Requested time',
+                            requestedTimeLabel,
                           ),
                         if (scheduledDate.isNotEmpty)
                           _detailRow(

@@ -23,6 +23,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $repoRoot
 
 Write-Host "`n=== Lanka Connect: Web Integration Tests ===" -ForegroundColor Cyan
 Write-Host "Emulator host: $EmulatorHost" -ForegroundColor Yellow

@@ -406,7 +406,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 Text(
                   hasAppliedOffer
                       ? 'Discount saved: LKR ${booking['discountAmount'] ?? 0}'
-                      : 'You can save LKR ${bestOffer.discountAmount.toStringAsFixed(0)} on this checkout.',
+                      : 'You can save LKR ${bestOffer!.discountAmount.toStringAsFixed(0)} on this checkout.',
                 ),
                 if (!actionsLocked && bestOffer != null) ...[
                   const SizedBox(height: 10),

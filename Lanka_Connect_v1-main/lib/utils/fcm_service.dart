@@ -151,22 +151,8 @@ class FcmService {
   /// Handle messages received while the app is in the foreground.
   static void _handleForegroundMessage(RemoteMessage message) {
     debugPrint('FCM foreground message: ${message.notification?.title}');
-    // Foreground messages are handled by the in-app Firestore listeners.
-    // Show a brief SnackBar so the user knows a notification arrived.
-    final nav = MyApp.navigatorKey.currentState;
-    final ctx = nav?.context;
-    if (ctx != null && message.notification != null) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
-        SnackBar(
-          content: Text(message.notification!.title ?? 'New notification'),
-          duration: const Duration(seconds: 3),
-          action: SnackBarAction(
-            label: 'View',
-            onPressed: () => _navigateFromMessage(message.data),
-          ),
-        ),
-      );
-    }
+    // Foreground messages are handled by the in-app Firestore listeners
+    // and TigerFeedback notifications, so no extra SnackBar is needed.
   }
 
   /// Handle when a user taps a notification while app is in background/terminated.

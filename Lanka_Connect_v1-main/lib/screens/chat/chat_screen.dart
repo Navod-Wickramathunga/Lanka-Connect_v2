@@ -31,6 +31,8 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _otherPartyName;
   String? _serviceTitle;
   String? _otherPartyId;
+  String _otherPartyImageUrl = '';
+  String _myImageUrl = '';
 
   String _chatErrorMessage(Object error) {
     if (error is FirebaseException && error.code == 'failed-precondition') {
@@ -69,8 +71,20 @@ class _ChatScreenState extends State<ChatScreen> {
               userData,
               fallback: 'User',
             );
+            _otherPartyImageUrl = ProfileIdentity.profileImageUrlFrom(userData);
           });
         }
+      }
+
+      final selfDoc = await FirestoreRefs.users().doc(user.uid).get();
+      final selfData = selfDoc.data();
+      if (mounted) {
+        setState(() {
+          _myImageUrl = ProfileIdentity.profileImageUrlFrom(
+            selfData,
+            authUser: user,
+          );
+        });
       }
 
       if (serviceId.isNotEmpty) {
@@ -290,21 +304,28 @@ class _ChatScreenState extends State<ChatScreen> {
                   CircleAvatar(
                     backgroundColor: Colors.white.withValues(alpha: 0.2),
                     radius: 18,
-                    child: Text(
-                      otherPartyInitial,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
+                    backgroundImage: _otherPartyImageUrl.isNotEmpty
+                        ? NetworkImage(_otherPartyImageUrl)
+                        : null,
+                    child: _otherPartyImageUrl.isEmpty
+                        ? Text(
+                            otherPartyInitial,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          )
+                        : null,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                       stream: _otherPartyId == null || _otherPartyId!.isEmpty
                           ? null
-                          : FirestoreRefs.users().doc(_otherPartyId).snapshots(),
+                          : FirestoreRefs.users()
+                                .doc(_otherPartyId)
+                                .snapshots(),
                       builder: (context, presenceSnapshot) {
                         final presenceData = presenceSnapshot.data?.data();
                         final resolvedName = ProfileIdentity.displayNameFrom(
@@ -346,7 +367,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                         ? statusLabel
                                         : '${_serviceTitle!} • $statusLabel',
                                     style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.8),
+                                      color: Colors.white.withValues(
+                                        alpha: 0.8,
+                                      ),
                                       fontSize: 12,
                                     ),
                                     maxLines: 1,
@@ -470,6 +493,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           senderName: isMine
                               ? null
                               : (_otherPartyName ?? 'User'),
+                          avatarUrl: isMine ? _myImageUrl : _otherPartyImageUrl,
+                          avatarInitial: isMine ? 'Me' : otherPartyInitial,
                           isDark: isDark,
                         ),
                       ],
@@ -582,6 +607,8 @@ class _ChatBubble extends StatelessWidget {
     required this.time,
     required this.isMine,
     this.senderName,
+    this.avatarUrl,
+    this.avatarInitial = 'U',
     this.isDark = false,
   });
 
@@ -589,6 +616,8 @@ class _ChatBubble extends StatelessWidget {
   final String time;
   final bool isMine;
   final String? senderName;
+  final String? avatarUrl;
+  final String avatarInitial;
   final bool isDark;
 
   @override
@@ -623,6 +652,23 @@ class _ChatBubble extends StatelessWidget {
       child: Row(
         mainAxisAlignment: rowAlignment,
         children: [
+          if (!isMine) ...[
+            CircleAvatar(
+              radius: 14,
+              backgroundImage: (avatarUrl ?? '').trim().isNotEmpty
+                  ? NetworkImage((avatarUrl ?? '').trim())
+                  : null,
+              child: (avatarUrl ?? '').trim().isEmpty
+                  ? Text(
+                      avatarInitial.isEmpty
+                          ? 'U'
+                          : avatarInitial[0].toUpperCase(),
+                      style: const TextStyle(fontSize: 10),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 6),
+          ],
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxBubbleWidth),
             child: Column(
@@ -685,6 +731,23 @@ class _ChatBubble extends StatelessWidget {
               ],
             ),
           ),
+          if (isMine) ...[
+            const SizedBox(width: 6),
+            CircleAvatar(
+              radius: 14,
+              backgroundImage: (avatarUrl ?? '').trim().isNotEmpty
+                  ? NetworkImage((avatarUrl ?? '').trim())
+                  : null,
+              child: (avatarUrl ?? '').trim().isEmpty
+                  ? Text(
+                      avatarInitial.isEmpty
+                          ? 'U'
+                          : avatarInitial[0].toUpperCase(),
+                      style: const TextStyle(fontSize: 10),
+                    )
+                  : null,
+            ),
+          ],
         ],
       ),
     );

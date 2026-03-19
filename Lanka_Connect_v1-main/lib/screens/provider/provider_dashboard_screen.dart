@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import '../bookings/booking_list_screen.dart';
+import 'provider_services_screen.dart';
 import '../../ui/theme/design_tokens.dart';
 import '../../utils/firestore_refs.dart';
 
@@ -172,6 +174,10 @@ class _QuickStatsRow extends StatelessWidget {
   final String uid;
   final Color cardColor;
 
+  void _open(BuildContext context, Widget page) {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -185,6 +191,7 @@ class _QuickStatsRow extends StatelessWidget {
                 .where('providerId', isEqualTo: uid)
                 .snapshots(),
             cardColor: cardColor,
+            onTap: () => _open(context, const ProviderServicesScreen()),
           ),
         ),
         const SizedBox(width: 10),
@@ -197,6 +204,7 @@ class _QuickStatsRow extends StatelessWidget {
                 .where('providerId', isEqualTo: uid)
                 .snapshots(),
             cardColor: cardColor,
+            onTap: () => _open(context, const BookingListScreen()),
           ),
         ),
         const SizedBox(width: 10),
@@ -209,6 +217,7 @@ class _QuickStatsRow extends StatelessWidget {
                 .where('providerId', isEqualTo: uid)
                 .snapshots(),
             cardColor: cardColor,
+            onTap: () => _open(context, const BookingListScreen()),
           ),
         ),
       ],
@@ -223,12 +232,14 @@ class _StatMini extends StatelessWidget {
     required this.color,
     required this.stream,
     required this.cardColor,
+    this.onTap,
   });
   final String label;
   final IconData icon;
   final Color color;
   final Stream<QuerySnapshot<Map<String, dynamic>>> stream;
   final Color cardColor;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -242,28 +253,43 @@ class _StatMini extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-            child: Column(
-              children: [
-                Icon(icon, color: color, size: 24),
-                const SizedBox(height: 8),
-                Text(
-                  '$count',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+              child: Column(
+                children: [
+                  Icon(icon, color: color, size: 24),
+                  const SizedBox(height: 8),
+                  Text(
+                    '$count',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w500,
+                  const SizedBox(height: 2),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-              ],
+                  if (onTap != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'View',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: color,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         );
@@ -285,17 +311,20 @@ class _MonthlyServiceSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd = DateTime(now.year, now.month + 1, 1);
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: FirestoreRefs.bookings()
           .where('providerId', isEqualTo: uid)
-          .where(
-            'createdAt',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart),
-          )
           .snapshots(),
       builder: (context, snapshot) {
-        final docs = snapshot.data?.docs ?? [];
+        final allDocs = snapshot.data?.docs ?? [];
+        final docs = allDocs.where((doc) {
+          final ts = doc.data()['createdAt'];
+          if (ts is! Timestamp) return true;
+          final dt = ts.toDate();
+          return !dt.isBefore(monthStart) && dt.isBefore(monthEnd);
+        }).toList();
         int completed = 0;
         int pending = 0;
         int cancelled = 0;
@@ -327,6 +356,15 @@ class _MonthlyServiceSummary extends StatelessWidget {
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Live updates',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -391,7 +429,10 @@ class _MonthStat extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             label,
-            style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 10,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
             textAlign: TextAlign.center,
           ),
         ],
@@ -663,7 +704,9 @@ class _RatingsCard extends StatelessWidget {
                                 '$count',
                                 style: TextStyle(
                                   fontSize: 11,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
                                 ),
                               ),
                             ),
@@ -741,7 +784,9 @@ class _LevelCard extends StatelessWidget {
                             '$completedCount completed jobs',
                             style: TextStyle(
                               fontSize: 12,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ],
