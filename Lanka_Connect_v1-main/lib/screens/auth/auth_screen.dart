@@ -40,6 +40,7 @@ class _AuthScreenState extends State<AuthScreen> {
   String? _error;
   bool _showPassword = false;
   bool _panelsVisible = false;
+  bool _staySignedIn = false;
 
   bool get _isLogin => _mode == _AuthMode.login;
   bool get _usingEmulators => FirebaseEnv.useEmulators;
@@ -215,6 +216,11 @@ class _AuthScreenState extends State<AuthScreen> {
 
     final profileRole = UserRoles.normalize(snapshot.data()?['role']);
     if (profileRole == _portalRole) {
+      // Enrich profile with Firebase Auth identity data (email, name) if
+      // those fields are missing — mirrors the ProfileIdentity fallback
+      // used across the app so that every user is identifiable in the
+      // admin panel and other user lists.
+      await _enrichProfileIfNeeded(user, snapshot.data()!);
       return;
     }
 
@@ -225,6 +231,55 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
+  /// Updates the user's Firestore profile with Firebase Auth identity fields
+  /// (email, displayName → name) if they are currently blank.  Only writes
+  /// the document when there is something new to persist.
+  Future<void> _enrichProfileIfNeeded(
+    User user,
+    Map<String, dynamic> existing,
+  ) async {
+    final storedEmail = (existing['email'] ?? '').toString().trim();
+    final storedName = (existing['name'] ?? '').toString().trim();
+    final storedDisplayName = (existing['displayName'] ?? '').toString().trim();
+
+    final updates = <String, dynamic>{};
+
+    // Sync email from Firebase Auth when missing in Firestore
+    final authEmail = (user.email ?? '').trim();
+    if (storedEmail.isEmpty && authEmail.isNotEmpty) {
+      updates['email'] = authEmail;
+    }
+
+    // Derive a readable name from email when the name field is blank
+    if (storedName.isEmpty) {
+      final authDisplayName = (user.displayName ?? '').trim();
+      if (authDisplayName.isNotEmpty) {
+        updates['name'] = authDisplayName;
+      } else {
+        final emailSource = updates['email'] as String? ?? storedEmail;
+        if (emailSource.isNotEmpty) {
+          updates['name'] = _nameFromEmail(emailSource);
+        } else if (authEmail.isNotEmpty) {
+          updates['name'] = _nameFromEmail(authEmail);
+        }
+      }
+    }
+
+    // Sync displayName for consistent look-ups in ProfileIdentity
+    if (storedDisplayName.isEmpty) {
+      final authDisplayName = (user.displayName ?? '').trim();
+      if (authDisplayName.isNotEmpty) {
+        updates['displayName'] = authDisplayName;
+      } else if (updates.containsKey('name')) {
+        updates['displayName'] = updates['name'];
+      }
+    }
+
+    if (updates.isNotEmpty) {
+      await FirestoreRefs.users().doc(user.uid).update(updates);
+    }
+  }
+
   Future<void> _sendPasswordResetEmail(String email) async {
     final handler = widget.passwordResetHandler;
     if (handler != null) {
@@ -232,20 +287,41 @@ class _AuthScreenState extends State<AuthScreen> {
       return;
     }
 
+    // Staging demo mode: use Firebase's built-in reset email flow directly to
+    // avoid SendGrid deliverability issues when no authenticated sender domain
+    // is available.
+    if (FirebaseEnv.isStaging) {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      return;
+    }
+
     try {
       final callable = FirebaseFunctions.instance.httpsCallable(
         'requestPasswordResetEmail',
       );
-      await callable.call({'email': email});
+      final result = await callable.call<Map<String, dynamic>>({
+        'email': email,
+      });
+      final data = result.data;
+      if (data['accountExists'] == false) {
+        throw const _PasswordResetAccountNotFound();
+      }
       return;
-    } on FirebaseFunctionsException {
-      // Fall back to Firebase Auth native email flow so reset still works
-      // even if callable functions are unavailable/misconfigured.
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+    } on _PasswordResetAccountNotFound {
+      rethrow;
+    } on FirebaseFunctionsException catch (e) {
+      throw FirebaseAuthException(
+        code: 'network-request-failed',
+        message:
+            e.message ??
+            'Could not send reset email. Check your connection and try again.',
+      );
     } catch (_) {
-      // Fall back to Firebase Auth native email flow so reset still works
-      // even if callable functions are unavailable/misconfigured.
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      throw FirebaseAuthException(
+        code: 'network-request-failed',
+        message:
+            'Could not send reset email. Check your connection and try again.',
+      );
     }
   }
 
@@ -295,6 +371,14 @@ class _AuthScreenState extends State<AuthScreen> {
         return _ForgotPasswordDialog(
           initialEmail: initialEmail,
           onSubmit: _sendPasswordResetEmail,
+          onOpenSignup: (email) {
+            Navigator.of(context).pop();
+            if (_emailController.text.trim() != email) {
+              _emailController.text = email;
+            }
+            _setMode(_AuthMode.signup);
+          },
+          autoRouteUnknownAccount: _isWebLayout,
           mapError: _passwordResetError,
           mapCallableError: _passwordResetCallableError,
         );
@@ -319,13 +403,7 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!_isLogin) {
       return 'Create your Lanka Connect account';
     }
-    if (_portalRole == UserRoles.provider) {
-      return 'Provider workspace login';
-    }
-    if (_portalRole == UserRoles.admin) {
-      return 'Admin control center login';
-    }
-    return 'Seeker portal login';
+    return 'Lanka Connect';
   }
 
   void _setMode(_AuthMode mode) {
@@ -333,6 +411,7 @@ class _AuthScreenState extends State<AuthScreen> {
       _mode = mode;
       _formKey = GlobalKey<FormState>();
       _error = null;
+      _showPassword = false;
       if (!_isLogin && _portalRole == UserRoles.admin && !_usingEmulators) {
         _portalRole = UserRoles.seeker;
         _role = UserRoles.seeker;
@@ -341,39 +420,86 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _authModeSwitcher({required bool webLayout}) {
-    return Wrap(
-      key: const Key('auth_mode_switcher'),
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        ChoiceChip(
-          label: const Text('Login'),
-          selected: _isLogin,
-          onSelected: _loading ? null : (_) => _setMode(_AuthMode.login),
-          avatar: _isLogin ? const Icon(Icons.check, size: 16) : null,
-        ),
-        ChoiceChip(
-          label: const Text('Sign up'),
-          selected: !_isLogin,
-          onSelected: _loading ? null : (_) => _setMode(_AuthMode.signup),
-          avatar: !_isLogin ? const Icon(Icons.check, size: 16) : null,
-        ),
-        if (webLayout)
-          Padding(
-            padding: const EdgeInsets.only(left: 8),
-            child: Text(
-              'Secure role-based portals',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: DesignTokens.authWebPanelMuted,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+    if (!webLayout) {
+      return Wrap(
+        key: const Key('auth_mode_switcher'),
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          ChoiceChip(
+            label: const Text('Login'),
+            selected: _isLogin,
+            onSelected: _loading ? null : (_) => _setMode(_AuthMode.login),
+            avatar: _isLogin ? const Icon(Icons.check, size: 16) : null,
           ),
+          ChoiceChip(
+            label: const Text('Sign up'),
+            selected: !_isLogin,
+            onSelected: _loading ? null : (_) => _setMode(_AuthMode.signup),
+            avatar: !_isLogin ? const Icon(Icons.check, size: 16) : null,
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      key: const Key('auth_mode_switcher'),
+      children: [
+        _WebAuthTab(
+          label: 'Login',
+          selected: _isLogin,
+          onTap: _loading ? null : () => _setMode(_AuthMode.login),
+        ),
+        const SizedBox(width: 26),
+        _WebAuthTab(
+          label: 'Sign up',
+          selected: !_isLogin,
+          onTap: _loading ? null : () => _setMode(_AuthMode.signup),
+        ),
       ],
     );
   }
 
   Widget _portalSelector({required bool compact}) {
+    if (_isWebLayout) {
+      final webRoles = <({String label, String role})>[
+        (label: 'Seeker', role: UserRoles.seeker),
+        (label: 'Provider', role: UserRoles.provider),
+        if (_isLogin) (label: 'Admin', role: UserRoles.admin),
+      ];
+      return Container(
+        key: const Key('portal_selector'),
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEBEEEE),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          children: [
+            for (var i = 0; i < webRoles.length; i++) ...[
+              Expanded(
+                child: _WebRoleSegment(
+                  label: webRoles[i].label,
+                  selected: _portalRole == webRoles[i].role,
+                  onTap: _loading
+                      ? null
+                      : () {
+                          setState(() {
+                            _portalRole = webRoles[i].role;
+                            if (!_isLogin) {
+                              _role = webRoles[i].role;
+                            }
+                          });
+                        },
+                ),
+              ),
+              if (i != webRoles.length - 1) const SizedBox(width: 6),
+            ],
+          ],
+        ),
+      );
+    }
+
     return Wrap(
       key: const Key('portal_selector'),
       spacing: 10,
@@ -430,13 +556,819 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _buildAuthForm({required bool webLayout}) {
+    if (!webLayout) {
+      return _buildMobileAuthForm();
+    }
+
+    return _buildWebAuthForm();
+  }
+
+  Widget _buildWebAuthForm() {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: FocusTraversalGroup(
+          policy: OrderedTraversalPolicy(),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FocusTraversalOrder(
+                  order: const NumericFocusOrder(1),
+                  child: _authModeSwitcher(webLayout: true),
+                ),
+                const SizedBox(height: 26),
+                if (FirebaseEnv.backendLabel().isNotEmpty) ...[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE7F7F7),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: const Color(0xFFC8E6E8)),
+                      ),
+                      child: Text(
+                        'Environment: ${FirebaseEnv.backendLabel()}',
+                        style: const TextStyle(
+                          color: Color(0xFF0C6369),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                ],
+                if (!_isLogin) ...[
+                  Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEAF5F5),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFFD4E9E9)),
+                    ),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Create your Lanka Connect account',
+                          style: TextStyle(
+                            color: Color(0xFF18484B),
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Choose your role and sign up to find trusted help or offer local services.',
+                          style: TextStyle(
+                            color: Color(0xFF4B6363),
+                            fontSize: 14,
+                            height: 1.45,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+                const Text(
+                  'I am a...',
+                  style: TextStyle(
+                    color: Color(0xFF4B6363),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                FocusTraversalOrder(
+                  order: const NumericFocusOrder(2),
+                  child: _portalSelector(compact: false),
+                ),
+                const SizedBox(height: 28),
+                const Text(
+                  'Email Address',
+                  style: TextStyle(
+                    color: Color(0xFF3F4949),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                FocusTraversalOrder(
+                  order: const NumericFocusOrder(3),
+                  child: TextFormField(
+                    controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                    autofillHints: const [
+                      AutofillHints.username,
+                      AutofillHints.email,
+                    ],
+                    onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    decoration: _webInputDecoration(
+                      hintText: 'name@company.com',
+                      icon: Icons.mail_outline,
+                    ),
+                    validator: Validators.emailField,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Password',
+                        style: TextStyle(
+                          color: Color(0xFF3F4949),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (_isLogin)
+                      TextButton(
+                        key: const Key('forgot_password_button'),
+                        onPressed: _loading ? null : _openForgotPasswordDialog,
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFF005458),
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                        child: const Text('Forgot?'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                FocusTraversalOrder(
+                  order: const NumericFocusOrder(4),
+                  child: TextFormField(
+                    controller: _passwordController,
+                    textInputAction: TextInputAction.done,
+                    autofillHints: _isLogin
+                        ? const [AutofillHints.password]
+                        : const [AutofillHints.newPassword],
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    onFieldSubmitted: (_) => _submit(),
+                    decoration: _webInputDecoration(
+                      hintText: '********',
+                      icon: Icons.lock_outline,
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _showPassword = !_showPassword;
+                          });
+                        },
+                        icon: Icon(
+                          _showPassword
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          color: const Color(0xFF9AA7AB),
+                        ),
+                      ),
+                    ),
+                    obscureText: !_showPassword,
+                    validator: (value) =>
+                        Validators.passwordField(value, isLogin: _isLogin),
+                  ),
+                ),
+                if (_isLogin) ...[
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: _staySignedIn,
+                        onChanged: _loading
+                            ? null
+                            : (value) {
+                                setState(() {
+                                  _staySignedIn = value ?? false;
+                                });
+                              },
+                        side: const BorderSide(color: Color(0xFFB9C6CA)),
+                        activeColor: const Color(0xFF005458),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Stay signed in for 30 days',
+                        style: TextStyle(
+                          color: Color(0xFF4B6363),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  _InlineAuthMessage(
+                    icon: Icons.error_outline,
+                    message: _error!,
+                    foreground: Colors.red.shade800,
+                    background: DesignTokens.authWebErrorSurface,
+                    borderColor: DesignTokens.authWebErrorBorder,
+                  ),
+                ],
+                const SizedBox(height: 24),
+                FocusTraversalOrder(
+                  order: const NumericFocusOrder(6),
+                  child: ElevatedButton.icon(
+                    onPressed: _loading ? null : _submit,
+                    style: _primaryActionButtonStyle(true),
+                    iconAlignment: IconAlignment.end,
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 22),
+                    label: Text(
+                      _loading
+                          ? 'Please wait...'
+                          : _isLogin
+                          ? 'Sign In'
+                          : 'Create ${_roleLabel(_role)} Account',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Divider(color: Color(0x1A6D7C80), thickness: 1),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: const Text(
+                        'OR',
+                        style: TextStyle(
+                          color: Color(0xFF6F7979),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                    const Expanded(
+                      child: Divider(color: Color(0x1A6D7C80), thickness: 1),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                FocusTraversalOrder(
+                  order: const NumericFocusOrder(8),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _loading ? null : _continueAsGuest,
+                      style: _guestActionButtonStyle(true),
+                      child: const Text('Continue as Guest'),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 26),
+                const Text(
+                  'By continuing, you agree to Lanka Connect\'s Terms of Service and Privacy Policy.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF4B6363),
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _webInputDecoration({
+    required String hintText,
+    required IconData icon,
+    Widget? suffixIcon,
+  }) {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(999),
+      borderSide: const BorderSide(color: Color(0x1A788A8D)),
+    );
+    return InputDecoration(
+      hintText: hintText,
+      hintStyle: const TextStyle(color: Color(0xFF7D8E92), fontSize: 15),
+      prefixIcon: Icon(icon, color: const Color(0xFF8C9B9F), size: 21),
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      border: border,
+      enabledBorder: border,
+      focusedBorder: border.copyWith(
+        borderSide: const BorderSide(color: Color(0xFF0A6E73), width: 1.6),
+      ),
+      errorBorder: border.copyWith(
+        borderSide: const BorderSide(color: Color(0xFFE07A7A)),
+      ),
+      focusedErrorBorder: border.copyWith(
+        borderSide: const BorderSide(color: Color(0xFFD54F4F), width: 1.5),
+      ),
+    );
+  }
+
+  ButtonStyle _primaryActionButtonStyle(bool webLayout) {
+    if (!webLayout) {
+      return ElevatedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        backgroundColor: DesignTokens.authMobileSegmentSelected,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+        textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+      );
+    }
+
+    return ButtonStyle(
+      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 18)),
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return const Color(0xFF005458).withValues(alpha: 0.45);
+        }
+        if (states.contains(WidgetState.pressed)) {
+          return const Color(0xFF004F52);
+        }
+        if (states.contains(WidgetState.hovered)) {
+          return const Color(0xFF126E72);
+        }
+        return const Color(0xFF005458);
+      }),
+      foregroundColor: const WidgetStatePropertyAll(Colors.white),
+      elevation: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) return 0.0;
+        if (states.contains(WidgetState.hovered)) return 1.0;
+        return 0.0;
+      }),
+      shape: WidgetStatePropertyAll(
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+      ),
+      textStyle: const WidgetStatePropertyAll(
+        TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  ButtonStyle _guestActionButtonStyle(bool webLayout) {
+    if (!webLayout) {
+      return ElevatedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        backgroundColor: DesignTokens.authMobileGuestSurface,
+        foregroundColor: DesignTokens.authMobileGuestText,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+        textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+      );
+    }
+
+    return ButtonStyle(
+      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 18)),
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return const Color(0xFFCEE8E8).withValues(alpha: 0.65);
+        }
+        if (states.contains(WidgetState.hovered)) {
+          return const Color(0xFFB2CBCB);
+        }
+        return const Color(0xFFCEE8E8);
+      }),
+      foregroundColor: const WidgetStatePropertyAll(Color(0xFF516969)),
+      elevation: const WidgetStatePropertyAll(0),
+      shape: WidgetStatePropertyAll(
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+      ),
+      textStyle: const WidgetStatePropertyAll(
+        TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _buildHeroPanel({required bool compact, bool condensed = false}) {
+    final panelPadding = switch ((compact, condensed)) {
+      (true, _) => 24.0,
+      (false, true) => 30.0,
+      (false, false) => 44.0,
+    };
+    final brandFontSize = switch ((compact, condensed)) {
+      (true, _) => 24.0,
+      (false, true) => 28.0,
+      (false, false) => 34.0,
+    };
+    final headlineFontSize = switch ((compact, condensed)) {
+      (true, _) => 42.0,
+      (false, true) => 52.0,
+      (false, false) => 64.0,
+    };
+    final headerSpacing = switch ((compact, condensed)) {
+      (true, _) => 28.0,
+      (false, true) => 28.0,
+      (false, false) => 44.0,
+    };
+    final sectionSpacing = switch ((compact, condensed)) {
+      (true, _) => 20.0,
+      (false, true) => 18.0,
+      (false, false) => 24.0,
+    };
+
+    return AnimatedSlide(
+      duration: const Duration(milliseconds: 420),
+      curve: Curves.easeOut,
+      offset: _panelsVisible ? Offset.zero : const Offset(-0.04, 0),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 460),
+        opacity: _panelsVisible ? 1 : 0,
+        child: Container(
+          key: const Key('auth_web_hero'),
+          padding: EdgeInsets.all(panelPadding),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(42),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF005458), Color(0xFF126E72)],
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x3300363A),
+                blurRadius: 40,
+                offset: Offset(0, 16),
+              ),
+            ],
+          ),
+          child: LayoutBuilder(
+            builder: (context, heroConstraints) {
+              final content = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.bolt_rounded,
+                        color: Color(0xFFA2F0F4),
+                        size: 28,
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Lanka Connect',
+                        style: TextStyle(
+                          color: const Color(0xFFA2F0F4),
+                          fontSize: brandFontSize,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: headerSpacing),
+                  Text(
+                    'Lanka Connect -\nTrusted local services\nin minutes.',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: headlineFontSize,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -1.2,
+                      height: 1.06,
+                    ),
+                  ),
+                  SizedBox(height: condensed ? 18 : 28),
+                  if (condensed) ...[
+                    const Text(
+                      'Verified providers, quick matching, and protected payments in one trusted local marketplace.',
+                      style: TextStyle(
+                        color: Color(0xFFD5F1F3),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w500,
+                        height: 1.4,
+                      ),
+                    ),
+                    SizedBox(height: sectionSpacing),
+                    const _HeroTrustStrip(),
+                    SizedBox(height: sectionSpacing),
+                    const Text(
+                      'Join over 12,000 satisfied users in Sri Lanka.',
+                      style: TextStyle(
+                        color: Color(0xFFD5F1F3),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ] else ...[
+                    const _FeatureLine(
+                      icon: Icons.verified_user_rounded,
+                      title: 'Verified Professionals',
+                      text:
+                          'Every provider undergoes a rigorous identity and skill verification process.',
+                    ),
+                    SizedBox(height: sectionSpacing),
+                    const _FeatureLine(
+                      icon: Icons.schedule_rounded,
+                      title: 'Instant Matching',
+                      text:
+                          'Our intelligent algorithm connects you with local experts quickly.',
+                    ),
+                    SizedBox(height: sectionSpacing),
+                    const _FeatureLine(
+                      icon: Icons.payments_rounded,
+                      title: 'Secure Escrow',
+                      text:
+                          'Payments are held safely and released only after satisfaction.',
+                    ),
+                    const SizedBox(height: 36),
+                    Text(
+                      'Join over 12,000 satisfied users in Sri Lanka.',
+                      style: TextStyle(
+                        color: const Color(0xFFD5F1F3),
+                        fontSize: compact ? 18 : 22,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ],
+              );
+
+              if (!heroConstraints.hasBoundedHeight) {
+                return content;
+              }
+
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: heroConstraints.maxHeight,
+                  ),
+                  child: content,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileWebBrandHeader() {
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 460),
+      opacity: _panelsVisible ? 1 : 0,
+      child: Container(
+        key: const Key('auth_web_hero'),
+        padding: const EdgeInsets.fromLTRB(20, 22, 20, 22),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF005458), Color(0xFF126E72)],
+          ),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.bolt_rounded, color: Color(0xFFA2F0F4), size: 26),
+            const SizedBox(width: 10),
+            const Text(
+              'Lanka Connect',
+              style: TextStyle(
+                color: Color(0xFFA2F0F4),
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebLayout() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7FAF9),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final viewport = _viewportForWidth(constraints.maxWidth);
+            final isWide = viewport == _WebAuthViewport.wide;
+            final isCompact = viewport == _WebAuthViewport.compact;
+            // Use the shorter hero variant for typical laptop-height web viewports
+            // so the marketing panel does not overflow before the auth form.
+            final condensedWideHero = isWide && constraints.maxHeight < 980;
+            final panelPadding = isCompact ? 16.0 : 26.0;
+            final pagePadding = isCompact ? 0.0 : 24.0;
+
+            final authPanel = AnimatedSlide(
+              duration: const Duration(milliseconds: 460),
+              curve: Curves.easeOut,
+              offset: _panelsVisible ? Offset.zero : const Offset(0.04, 0),
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 500),
+                opacity: _panelsVisible ? 1 : 0,
+                child: Container(
+                  key: Key(switch (viewport) {
+                    _WebAuthViewport.wide => 'auth_web_layout_wide',
+                    _WebAuthViewport.medium => 'auth_web_layout_medium',
+                    _WebAuthViewport.compact => 'auth_web_layout_compact',
+                  }),
+                  padding: EdgeInsets.all(panelPadding),
+                  decoration: isCompact
+                      ? null
+                      : BoxDecoration(
+                          color: const Color(0xFFF1F4F4),
+                          borderRadius: BorderRadius.circular(38),
+                          border: Border.all(color: const Color(0x1A6C7A7D)),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x1400383B),
+                              blurRadius: 30,
+                              offset: Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                  child: _buildAuthForm(webLayout: true),
+                ),
+              ),
+            );
+
+            if (isCompact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildMobileWebBrandHeader(),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: authPanel,
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            // Wide: full-viewport height — hero panel stretches to fill the
+            // viewport, auth panel scrolls independently if the form is taller
+            // than the available space.
+            if (isWide) {
+              return Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1520),
+                  child: Padding(
+                    padding: EdgeInsets.all(pagePadding),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          flex: 52,
+                          child: _buildHeroPanel(
+                            compact: false,
+                            condensed: condensedWideHero,
+                          ),
+                        ),
+                        const SizedBox(width: 22),
+                        Expanded(
+                          flex: 48,
+                          child: SingleChildScrollView(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                minHeight:
+                                    constraints.maxHeight - (pagePadding * 2),
+                              ),
+                              child: Align(
+                                alignment: Alignment.topCenter,
+                                child: authPanel,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            // Medium (stacked): hero panel above, auth form below, page scrolls
+            // as a whole.
+            return Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1520),
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.all(pagePadding),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - (pagePadding * 2),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildHeroPanel(compact: true),
+                        const SizedBox(height: 18),
+                        authPanel,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  String _nameFromEmail(String email) {
+    final atIndex = email.indexOf('@');
+    if (atIndex <= 0) return '';
+    final raw = email.substring(0, atIndex).trim();
+    if (raw.isEmpty) return '';
+
+    return raw
+        .replaceAll(RegExp(r'[._-]+'), ' ')
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .map((part) {
+          final first = part.substring(0, 1).toUpperCase();
+          final rest = part.length > 1 ? part.substring(1).toLowerCase() : '';
+          return '$first$rest';
+        })
+        .join(' ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isWebLayout) {
+      return _buildWebLayout();
+    }
+
+    return Scaffold(
+      backgroundColor: MobileTokens.backgroundDark,
+      body: SizedBox.expand(
+        child: Container(
+          width: double.infinity,
+          height: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: DesignTokens.authGradient,
+            ),
+          ),
+          child: SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - 32,
+                    ),
+                    child: Column(
+                      children: [
+                        const MobileGradientHeader(
+                          key: Key('auth_mobile_title'),
+                          title: 'Lanka Connect',
+                          subtitle:
+                              'Welcome back to your local service network',
+                          accentColor: MobileTokens.accent,
+                        ),
+                        const SizedBox(height: 14),
+                        MobileSectionCard(
+                          key: const Key('auth_mobile_panel'),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 220),
+                            child: KeyedSubtree(
+                              key: ValueKey('mobile|$_mode'),
+                              child: _buildAuthForm(webLayout: false),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileAuthForm() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bodyColor = webLayout
-        ? DesignTokens.authWebPanelMuted
-        : (isDark ? const Color(0xFFC9D7E6) : const Color(0xFF4A6072));
-    final headingColor = webLayout
-        ? DesignTokens.authWebPanelTitle
-        : Theme.of(context).colorScheme.onSurface;
+    final bodyColor = isDark
+        ? const Color(0xFFC9D7E6)
+        : const Color(0xFF4A6072);
+    final headingColor = Theme.of(context).colorScheme.onSurface;
 
     return FocusTraversalGroup(
       policy: OrderedTraversalPolicy(),
@@ -447,76 +1379,63 @@ class _AuthScreenState extends State<AuthScreen> {
           children: [
             FocusTraversalOrder(
               order: const NumericFocusOrder(1),
-              child: _authModeSwitcher(webLayout: webLayout),
+              child: _authModeSwitcher(webLayout: false),
             ),
-            SizedBox(height: webLayout ? 18 : 14),
-            Container(
-              padding: EdgeInsets.all(webLayout ? 18 : 0),
-              decoration: webLayout
-                  ? BoxDecoration(
-                      color: DesignTokens.authWebWarmSurface,
-                      borderRadius: BorderRadius.circular(
-                        DesignTokens.radiusLg,
-                      ),
-                    )
-                  : null,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _portalHeadline(),
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: headingColor,
-                    ),
+            const SizedBox(height: 14),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _portalHeadline(),
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: headingColor,
                   ),
-                  if (FirebaseEnv.backendLabel().isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: DesignTokens.brandPrimary.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: DesignTokens.brandPrimary.withValues(
-                            alpha: 0.35,
-                          ),
-                        ),
-                      ),
-                      child: Text(
-                        'Environment: ${FirebaseEnv.backendLabel()}',
-                        style: TextStyle(
-                          color: headingColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                ),
+                if (FirebaseEnv.backendLabel().isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: DesignTokens.brandPrimary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: DesignTokens.brandPrimary.withValues(
+                          alpha: 0.35,
                         ),
                       ),
                     ),
-                  ],
-                  const SizedBox(height: 8),
-                  Text(
-                    _isLogin
-                        ? 'Use the correct portal for your account type and continue where your work already lives.'
-                        : 'Create a seeker or provider account to get started.',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: webLayout
-                          ? DesignTokens.authWebWarmText
-                          : bodyColor,
-                      height: 1.45,
+                    child: Text(
+                      'Environment: ${FirebaseEnv.backendLabel()}',
+                      style: TextStyle(
+                        color: headingColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ],
-              ),
+                const SizedBox(height: 8),
+                Text(
+                  _isLogin
+                      ? 'Use the correct portal for your account type and continue where your work already lives.'
+                      : 'Create a seeker or provider account to get started.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: bodyColor,
+                    height: 1.45,
+                  ),
+                ),
+              ],
             ),
-            SizedBox(height: webLayout ? 20 : 18),
+            const SizedBox(height: 18),
             FocusTraversalOrder(
               order: const NumericFocusOrder(2),
-              child: _portalSelector(compact: !webLayout),
+              child: _portalSelector(compact: true),
             ),
-            SizedBox(height: webLayout ? 20 : 18),
+            const SizedBox(height: 18),
             FocusTraversalOrder(
               order: const NumericFocusOrder(3),
               child: TextFormField(
@@ -575,87 +1494,34 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: TextButton(
                     key: const Key('forgot_password_button'),
                     onPressed: _loading ? null : _openForgotPasswordDialog,
-                    style: webLayout
-                        ? TextButton.styleFrom(
-                            foregroundColor: DesignTokens.authWebPrimaryAction,
-                          )
-                        : null,
                     child: const Text('Forgot password?'),
                   ),
                 ),
               ),
             ] else
               const SizedBox(height: 12),
-            if (!_isLogin)
-              FocusTraversalOrder(
-                order: const NumericFocusOrder(5),
-                child: DropdownButtonFormField<String>(
-                  initialValue: _role,
-                  items: const [
-                    DropdownMenuItem(
-                      value: UserRoles.seeker,
-                      child: Text('Service Seeker'),
-                    ),
-                    DropdownMenuItem(
-                      value: UserRoles.provider,
-                      child: Text('Service Provider'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _role = value;
-                      _portalRole = value;
-                    });
-                  },
-                  decoration: const InputDecoration(
-                    labelText: 'Create account as',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
             if (_error != null) ...[
               const SizedBox(height: 12),
               _InlineAuthMessage(
                 icon: Icons.error_outline,
                 message: _error!,
                 foreground: Colors.red.shade800,
-                background: webLayout
-                    ? DesignTokens.authWebErrorSurface
-                    : Colors.red.shade50,
-                borderColor: webLayout
-                    ? DesignTokens.authWebErrorBorder
-                    : Colors.red.shade200,
+                background: Colors.red.shade50,
+                borderColor: Colors.red.shade200,
               ),
             ],
-            SizedBox(height: webLayout ? 20 : 18),
+            const SizedBox(height: 18),
             FocusTraversalOrder(
               order: const NumericFocusOrder(6),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: webLayout
-                      ? const [
-                          BoxShadow(
-                            color: DesignTokens.authWebPanelShadow,
-                            blurRadius: 20,
-                            offset: Offset(0, 10),
-                          ),
-                        ]
-                      : null,
-                ),
-                child: ElevatedButton(
-                  onPressed: _loading ? null : _submit,
-                  style: _primaryActionButtonStyle(webLayout),
-                  child: Text(
-                    _loading
-                        ? 'Please wait...'
-                        : _isLogin
-                        ? 'Login to ${_roleLabel(_portalRole)} Portal'
-                        : 'Create ${_roleLabel(_role)} Account',
-                  ),
+              child: ElevatedButton(
+                onPressed: _loading ? null : _submit,
+                style: _primaryActionButtonStyle(false),
+                child: Text(
+                  _loading
+                      ? 'Please wait...'
+                      : _isLogin
+                      ? 'Login to ${_roleLabel(_portalRole)} Portal'
+                      : 'Create ${_roleLabel(_role)} Account',
                 ),
               ),
             ),
@@ -668,11 +1534,6 @@ class _AuthScreenState extends State<AuthScreen> {
                     : () => _setMode(
                         _isLogin ? _AuthMode.signup : _AuthMode.login,
                       ),
-                style: webLayout
-                    ? TextButton.styleFrom(
-                        foregroundColor: DesignTokens.authWebPanelTitle,
-                      )
-                    : null,
                 child: Text(
                   _isLogin
                       ? 'Need an account? Sign up here'
@@ -689,9 +1550,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Text(
                     'OR',
                     style: TextStyle(
-                      color: webLayout
-                          ? DesignTokens.authWebPanelMuted
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                       fontWeight: FontWeight.w600,
                       fontSize: 13,
                     ),
@@ -709,7 +1568,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   onPressed: _loading ? null : _continueAsGuest,
                   icon: const Icon(Icons.person_outline, size: 20),
                   label: const Text('Continue as Guest'),
-                  style: _guestActionButtonStyle(webLayout),
+                  style: _guestActionButtonStyle(false),
                 ),
               ),
             ),
@@ -719,367 +1578,10 @@ class _AuthScreenState extends State<AuthScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12,
-                color: webLayout
-                    ? DesignTokens.authWebPanelMuted
-                    : Theme.of(context).colorScheme.onSurfaceVariant,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  ButtonStyle _primaryActionButtonStyle(bool webLayout) {
-    if (!webLayout) {
-      return ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-      );
-    }
-
-    return ButtonStyle(
-      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 16)),
-      backgroundColor: WidgetStateProperty.resolveWith((states) {
-        if (states.contains(WidgetState.disabled)) {
-          return DesignTokens.authWebPrimaryAction.withValues(alpha: 0.45);
-        }
-        if (states.contains(WidgetState.pressed)) {
-          return DesignTokens.authWebPrimaryActionPressed;
-        }
-        if (states.contains(WidgetState.hovered)) {
-          return DesignTokens.authWebPrimaryActionHover;
-        }
-        return DesignTokens.authWebPrimaryAction;
-      }),
-      foregroundColor: const WidgetStatePropertyAll(Colors.white),
-      elevation: WidgetStateProperty.resolveWith((states) {
-        if (states.contains(WidgetState.disabled)) return 0.0;
-        if (states.contains(WidgetState.hovered)) return 2.0;
-        return 0.0;
-      }),
-      shape: WidgetStatePropertyAll(
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-      textStyle: const WidgetStatePropertyAll(
-        TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-
-  ButtonStyle _guestActionButtonStyle(bool webLayout) {
-    if (!webLayout) {
-      return ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-        foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      );
-    }
-
-    return ButtonStyle(
-      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 14)),
-      backgroundColor: WidgetStateProperty.resolveWith((states) {
-        if (states.contains(WidgetState.disabled)) {
-          return DesignTokens.authWebSecondaryActionSurface.withValues(
-            alpha: 0.65,
-          );
-        }
-        if (states.contains(WidgetState.hovered)) {
-          return DesignTokens.authWebSecondaryActionHover;
-        }
-        return DesignTokens.authWebSecondaryActionSurface;
-      }),
-      foregroundColor: const WidgetStatePropertyAll(
-        DesignTokens.authWebSecondaryActionText,
-      ),
-      elevation: const WidgetStatePropertyAll(0),
-      shape: WidgetStatePropertyAll(
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
-  }
-
-  Widget _buildHeroPanel({required bool compact}) {
-    return AnimatedSlide(
-      duration: const Duration(milliseconds: 420),
-      curve: Curves.easeOut,
-      offset: _panelsVisible ? Offset.zero : const Offset(-0.04, 0),
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 460),
-        opacity: _panelsVisible ? 1 : 0,
-        child: Container(
-          key: const Key('auth_web_hero'),
-          padding: EdgeInsets.all(compact ? 24 : 32),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(DesignTokens.authWebHeroRadius),
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: DesignTokens.authWebHeroGradient,
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color: DesignTokens.authWebHeroGlow,
-                blurRadius: 36,
-                spreadRadius: 2,
-                offset: Offset(0, 14),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Lanka Connect',
-                style: TextStyle(
-                  color: DesignTokens.authWebHeroText,
-                  fontSize: 42,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.7,
-                  height: 1.0,
-                ),
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Trusted local services in minutes, with separate portals for seekers, providers, and admins.',
-                style: TextStyle(
-                  color: DesignTokens.authWebHeroTextMuted,
-                  fontSize: 17,
-                  height: 1.45,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 18),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: const [
-                  _HeroBadge(label: 'Verified local demand'),
-                  _HeroBadge(label: 'Role-based access'),
-                  _HeroBadge(label: 'Fast recovery support'),
-                ],
-              ),
-              const SizedBox(height: 28),
-              const _FeatureLine(
-                icon: Icons.search,
-                text: 'Seekers discover verified services and book faster.',
-              ),
-              const SizedBox(height: 12),
-              const _FeatureLine(
-                icon: Icons.engineering,
-                text: 'Providers manage visibility, requests, and responses.',
-              ),
-              const SizedBox(height: 12),
-              const _FeatureLine(
-                icon: Icons.admin_panel_settings,
-                text: 'Admins maintain platform quality and trust standards.',
-              ),
-              const SizedBox(height: 28),
-              _HeroTrustStrip(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildWebLayout() {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: DesignTokens.authWebBackgroundGradient,
-          ),
-        ),
-        child: Stack(
-          children: [
-            Positioned(
-              top: -140,
-              left: -110,
-              child: Container(
-                width: 360,
-                height: 360,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Color(0x26F59E0B),
-                ),
-              ),
-            ),
-            Positioned(
-              right: -120,
-              bottom: -120,
-              child: Container(
-                width: 320,
-                height: 320,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Color(0x1F0D9488),
-                ),
-              ),
-            ),
-            SafeArea(
-              child: Center(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final viewport = _viewportForWidth(constraints.maxWidth);
-                    final isWide = viewport == _WebAuthViewport.wide;
-                    final isCompact = viewport == _WebAuthViewport.compact;
-                    final horizontalPadding = isCompact ? 14.0 : 24.0;
-                    final panelPadding = isCompact
-                        ? 18.0
-                        : (isWide ? 30.0 : 24.0);
-
-                    final authPanel = AnimatedSlide(
-                      duration: const Duration(milliseconds: 460),
-                      curve: Curves.easeOut,
-                      offset: _panelsVisible
-                          ? Offset.zero
-                          : const Offset(0.04, 0),
-                      child: AnimatedOpacity(
-                        duration: const Duration(milliseconds: 500),
-                        opacity: _panelsVisible ? 1 : 0,
-                        child: Container(
-                          key: Key(switch (viewport) {
-                            _WebAuthViewport.wide => 'auth_web_layout_wide',
-                            _WebAuthViewport.medium => 'auth_web_layout_medium',
-                            _WebAuthViewport.compact =>
-                              'auth_web_layout_compact',
-                          }),
-                          padding: EdgeInsets.all(panelPadding),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(
-                              DesignTokens.authWebPanelRadius,
-                            ),
-                            color: DesignTokens.authWebPanelSurface,
-                            border: Border.all(
-                              color: DesignTokens.authWebPanelBorder,
-                            ),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: DesignTokens.authWebPanelShadow,
-                                blurRadius: DesignTokens.authWebPanelShadowBlur,
-                                offset: Offset(0, 14),
-                              ),
-                            ],
-                          ),
-                          child: _buildAuthForm(webLayout: true),
-                        ),
-                      ),
-                    );
-
-                    return ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1220),
-                      child: SingleChildScrollView(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: horizontalPadding,
-                          vertical: isCompact ? 16 : 24,
-                        ),
-                        child: isWide
-                            ? Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    flex: 6,
-                                    child: _buildHeroPanel(compact: false),
-                                  ),
-                                  const SizedBox(width: 24),
-                                  Expanded(flex: 5, child: authPanel),
-                                ],
-                              )
-                            : Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  _buildHeroPanel(compact: isCompact),
-                                  const SizedBox(height: 18),
-                                  authPanel,
-                                ],
-                              ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _nameFromEmail(String email) {
-    final atIndex = email.indexOf('@');
-    if (atIndex <= 0) return '';
-    final raw = email.substring(0, atIndex).trim();
-    if (raw.isEmpty) return '';
-
-    return raw
-        .replaceAll(RegExp(r'[._-]+'), ' ')
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .map((part) {
-          final first = part.substring(0, 1).toUpperCase();
-          final rest = part.length > 1 ? part.substring(1).toLowerCase() : '';
-          return '$first$rest';
-        })
-        .join(' ');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_isWebLayout) {
-      return _buildWebLayout();
-    }
-
-    return Scaffold(
-      backgroundColor: MobileTokens.backgroundDark,
-      body: SizedBox.expand(
-        child: Container(
-          width: double.infinity,
-          height: double.infinity,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: DesignTokens.authGradient,
-            ),
-          ),
-          child: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight - 32,
-                    ),
-                    child: Column(
-                      children: [
-                        const MobileGradientHeader(
-                          title: 'Lanka Connect',
-                          subtitle:
-                              'Welcome back to your local service network',
-                          accentColor: MobileTokens.accent,
-                        ),
-                        const SizedBox(height: 14),
-                        MobileSectionCard(
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 220),
-                            child: KeyedSubtree(
-                              key: ValueKey('$_mode|$_portalRole'),
-                              child: _buildAuthForm(webLayout: false),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
         ),
       ),
     );
@@ -1090,12 +1592,16 @@ class _ForgotPasswordDialog extends StatefulWidget {
   const _ForgotPasswordDialog({
     required this.initialEmail,
     required this.onSubmit,
+    required this.onOpenSignup,
+    required this.autoRouteUnknownAccount,
     required this.mapError,
     this.mapCallableError,
   });
 
   final String initialEmail;
   final Future<void> Function(String email) onSubmit;
+  final void Function(String email) onOpenSignup;
+  final bool autoRouteUnknownAccount;
   final String Function(FirebaseAuthException e) mapError;
   final String Function(FirebaseFunctionsException e)? mapCallableError;
 
@@ -1104,11 +1610,15 @@ class _ForgotPasswordDialog extends StatefulWidget {
 }
 
 class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
+  static const _genericSuccessMessage =
+      'If an account exists for this email, you will receive reset instructions shortly.';
+
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _emailController;
   bool _loading = false;
   String? _error;
   String? _success;
+  bool _accountNotFound = false;
 
   @override
   void initState() {
@@ -1122,6 +1632,17 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
     super.dispose();
   }
 
+  void _handleUnknownAccount() {
+    final email = _emailController.text.trim();
+    if (widget.autoRouteUnknownAccount) {
+      widget.onOpenSignup(email);
+      return;
+    }
+    setState(() {
+      _accountNotFound = true;
+    });
+  }
+
   Future<void> _submit() async {
     final form = _formKey.currentState;
     if (form == null || !form.validate()) return;
@@ -1130,19 +1651,30 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
       _loading = true;
       _error = null;
       _success = null;
+      _accountNotFound = false;
     });
 
     try {
       await widget.onSubmit(_emailController.text.trim());
       setState(() {
-        _success =
-            'If an account exists for this email, you will receive reset instructions shortly.';
+        _success = _genericSuccessMessage;
       });
     } on FirebaseAuthException catch (e) {
+      if (e.code == 'user-not-found') {
+        _handleUnknownAccount();
+        return;
+      }
       setState(() {
         _error = widget.mapError(e);
       });
+    } on _PasswordResetAccountNotFound {
+      _handleUnknownAccount();
+      return;
     } on FirebaseFunctionsException catch (e) {
+      if (e.code == 'not-found') {
+        _handleUnknownAccount();
+        return;
+      }
       setState(() {
         _error =
             widget.mapCallableError?.call(e) ??
@@ -1195,6 +1727,72 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
                   ),
                   validator: Validators.emailField,
                 ),
+                if (_accountNotFound) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    key: const Key('forgot_password_not_found'),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF8E1),
+                      border: Border.all(color: const Color(0xFFFFD54F)),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.info_outline,
+                          size: 18,
+                          color: Color(0xFFF57F17),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'No account found for this email.',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF5D4037),
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              const Text(
+                                'You can create a new account with this email.',
+                                style: TextStyle(
+                                  color: Color(0xFF5D4037),
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              TextButton.icon(
+                                key: const Key(
+                                  'forgot_password_signup_shortcut',
+                                ),
+                                onPressed: () => widget.onOpenSignup(
+                                  _emailController.text.trim(),
+                                ),
+                                icon: const Icon(
+                                  Icons.person_add_outlined,
+                                  size: 16,
+                                ),
+                                label: const Text('Sign up'),
+                                style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  foregroundColor: Color(0xFFF57F17),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 if (_error != null) ...[
                   const SizedBox(height: 10),
                   _InlineAuthMessage(
@@ -1241,6 +1839,10 @@ class _PortalRoleMismatch implements Exception {
   _PortalRoleMismatch(this.message);
 
   final String message;
+}
+
+class _PasswordResetAccountNotFound implements Exception {
+  const _PasswordResetAccountNotFound();
 }
 
 class _InlineAuthMessage extends StatelessWidget {
@@ -1309,6 +1911,112 @@ class _PortalChip extends StatefulWidget {
 
   @override
   State<_PortalChip> createState() => _PortalChipState();
+}
+
+class _WebAuthTab extends StatelessWidget {
+  const _WebAuthTab({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected
+                      ? const Color(0xFF0A666B)
+                      : const Color(0xFF5C6E72),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOut,
+                height: 3,
+                width: 88,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? const Color(0xFF0A666B)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WebRoleSegment extends StatelessWidget {
+  const _WebRoleSegment({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(999),
+            boxShadow: selected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x14003E42),
+                      blurRadius: 14,
+                      offset: Offset(0, 6),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: selected
+                  ? const Color(0xFF0A666B)
+                  : const Color(0xFF4E6166),
+              fontSize: 16,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _PortalChipState extends State<_PortalChip> {
@@ -1392,9 +2100,14 @@ class _PortalChipState extends State<_PortalChip> {
 }
 
 class _FeatureLine extends StatelessWidget {
-  const _FeatureLine({required this.icon, required this.text});
+  const _FeatureLine({
+    required this.icon,
+    required this.title,
+    required this.text,
+  });
 
   final IconData icon;
+  final String title;
   final String text;
 
   @override
@@ -1402,16 +2115,39 @@ class _FeatureLine extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: DesignTokens.authWebHeroAccent, size: 20),
-        const SizedBox(width: 10),
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Icon(icon, color: const Color(0xFFA2F0F4), size: 23),
+        ),
+        const SizedBox(width: 14),
         Expanded(
-          child: Text(
-            text,
-            style: const TextStyle(
-              color: DesignTokens.authWebHeroText,
-              height: 1.4,
-              fontWeight: FontWeight.w500,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                text,
+                style: const TextStyle(
+                  color: Color(0xFFD6F2F3),
+                  fontSize: 14,
+                  height: 1.35,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -1419,34 +2155,8 @@ class _FeatureLine extends StatelessWidget {
   }
 }
 
-class _HeroBadge extends StatelessWidget {
-  const _HeroBadge({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: DesignTokens.authWebHeroText,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.1,
-        ),
-      ),
-    );
-  }
-}
-
 class _HeroTrustStrip extends StatelessWidget {
+  const _HeroTrustStrip();
   @override
   Widget build(BuildContext context) {
     return Container(
