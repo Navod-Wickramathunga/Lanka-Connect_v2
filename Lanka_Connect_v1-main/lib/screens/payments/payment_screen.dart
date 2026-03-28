@@ -142,38 +142,52 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
-  Future<void> _applyOffer(AppliedOfferResult offer) async {
-    await FirestoreRefs.bookings().doc(widget.bookingId).set({
-      'appliedOfferId': offer.offerId,
-      'discountAmount': offer.discountAmount,
-      'grossAmount': offer.grossAmount,
-      'netAmount': offer.netAmount,
-      'appliedOfferMeta': offer.meta,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    if (!mounted) return;
-    TigerFeedback.show(
-      context,
-      'Tiger applied your best discount.',
-      tone: TigerFeedbackTone.success,
-    );
+  Future<void> _applyOffer() async {
+    setState(() => _saving = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'applyBestOfferToBooking',
+      );
+      await callable.call({'bookingId': widget.bookingId});
+      if (!mounted) return;
+      TigerFeedback.show(
+        context,
+        'Tiger applied your best discount.',
+        tone: TigerFeedbackTone.success,
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      FirestoreErrorHandler.showError(context, e.message ?? e.code);
+    } catch (e) {
+      if (!mounted) return;
+      FirestoreErrorHandler.showError(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _clearOffer() async {
-    await FirestoreRefs.bookings().doc(widget.bookingId).update({
-      'appliedOfferId': FieldValue.delete(),
-      'discountAmount': FieldValue.delete(),
-      'grossAmount': FieldValue.delete(),
-      'netAmount': FieldValue.delete(),
-      'appliedOfferMeta': FieldValue.delete(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    if (!mounted) return;
-    TigerFeedback.show(
-      context,
-      'Tiger removed the discount.',
-      tone: TigerFeedbackTone.info,
-    );
+    setState(() => _saving = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'clearBookingOffer',
+      );
+      await callable.call({'bookingId': widget.bookingId});
+      if (!mounted) return;
+      TigerFeedback.show(
+        context,
+        'Tiger removed the discount.',
+        tone: TigerFeedbackTone.info,
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      FirestoreErrorHandler.showError(context, e.message ?? e.code);
+    } catch (e) {
+      if (!mounted) return;
+      FirestoreErrorHandler.showError(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   bool _isPaymentFinalStatus(String status) =>
@@ -415,17 +429,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     runSpacing: 8,
                     children: [
                       FilledButton.icon(
-                        onPressed: hasAppliedOffer
+                        onPressed: hasAppliedOffer || _saving
                             ? null
-                            : () => _applyOffer(bestOffer),
+                            : _applyOffer,
                         icon: const Icon(Icons.local_offer_outlined),
-                        label: const Text('Apply Discount'),
+                        label: Text(
+                          _saving ? 'Applying...' : 'Apply Discount',
+                        ),
                       ),
                       if (hasAppliedOffer)
                         OutlinedButton.icon(
-                          onPressed: _clearOffer,
+                          onPressed: _saving ? null : _clearOffer,
                           icon: const Icon(Icons.close),
-                          label: const Text('Remove'),
+                          label: Text(_saving ? 'Removing...' : 'Remove'),
                         ),
                     ],
                   ),
@@ -611,7 +627,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
-            final docs = snapshot.data?.docs ?? const [];
+            final docs = (snapshot.data?.docs ?? const []).where((doc) {
+              final tokenRef = (doc.data()['tokenRef'] ?? '').toString().trim();
+              return tokenRef.isNotEmpty;
+            }).toList();
             if (docs.isEmpty) {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -621,7 +640,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       Icon(Icons.credit_card_off_outlined),
                       SizedBox(width: 8),
                       Expanded(
-                        child: Text('No saved cards found for this account.'),
+                        child: Text(
+                          'No usable saved cards found for this account.',
+                        ),
                       ),
                     ],
                   ),

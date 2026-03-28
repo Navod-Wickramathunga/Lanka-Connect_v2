@@ -303,32 +303,7 @@ service cloud.firestore {
         resource.data.providerId == request.auth.uid ||
         isAdmin()
       );
-
-      allow create: if signedIn()
-        && request.resource.data.seekerId == request.auth.uid
-        && request.resource.data.providerId is string
-        && request.resource.data.serviceId is string
-        && request.resource.data.bookingId is string
-        && request.resource.data.gateway in ['demo', 'payhere', 'bank_transfer']
-        && request.resource.data.status in ['initiated', 'pending_gateway', 'success', 'failed', 'pending_verification', 'paid']
-        && request.resource.data.methodType in ['card', 'saved_card', 'bank_transfer']
-        && (
-          request.resource.data.amount is int ||
-          request.resource.data.amount is float
-        )
-        && request.resource.data.amount >= 0
-        && exists(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId))
-        && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.seekerId == request.auth.uid
-        && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.providerId == request.resource.data.providerId
-        && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.serviceId == request.resource.data.serviceId
-        && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.status == 'accepted'
-        && (
-          request.resource.data.gateway != 'bank_transfer' ||
-          request.resource.data.status == 'pending_verification'
-        );
-
-      allow update: if isAdmin();
-      allow delete: if false;
+      allow create, update, delete: if false;
     }
 
     match /providerBankAccounts/{accountId} {

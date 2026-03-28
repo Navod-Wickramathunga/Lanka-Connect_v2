@@ -51,6 +51,10 @@ class DemoDataService {
     };
 
     final providerRef = db.collection('users').doc(providerId);
+    const providerBankAccountId = 'demo_provider_bank_primary';
+    final providerBankRef = db
+        .collection('providerBankAccounts')
+        .doc(providerBankAccountId);
     final serviceOneRef = db.collection('services').doc(approvedServiceOneId);
     final serviceTwoRef = db.collection('services').doc(approvedServiceTwoId);
     final pendingServiceRef = db.collection('services').doc(pendingServiceId);
@@ -83,6 +87,23 @@ class DemoDataService {
     } catch (e, st) {
       _logPhaseError('seed_demo_provider', e, st);
       throw _seedPhaseException('seed_demo_provider', e);
+    }
+
+    try {
+      await providerBankRef.set({
+        'providerId': providerId,
+        'bankName': 'Bank of Ceylon',
+        'accountName': 'Demo Provider',
+        'accountNumberMasked': '****5678',
+        'branch': 'Maharagama',
+        'isActive': true,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      result['updated'] = (result['updated'] as int) + 1;
+    } catch (e, st) {
+      _logPhaseError('seed_demo_provider_bank_account', e, st);
+      throw _seedPhaseException('seed_demo_provider_bank_account', e);
     }
 
     try {
