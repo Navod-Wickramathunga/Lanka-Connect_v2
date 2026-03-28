@@ -9,8 +9,6 @@ import '../../ui/web/web_page_scaffold.dart';
 import '../../utils/fcm_service.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
-import '../../utils/notification_service.dart';
-import '../../utils/user_roles.dart';
 import '../../widgets/notification_panel_widgets.dart';
 
 class NotificationsScreen extends StatelessWidget {
@@ -215,86 +213,73 @@ class NotificationsScreen extends StatelessWidget {
       return const Scaffold(body: Center(child: Text('Not signed in')));
     }
 
-    final body = StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: FirestoreRefs.users().doc(user.uid).snapshots(),
-      builder: (context, userSnapshot) {
-        final role = UserRoles.normalize(userSnapshot.data?.data()?['role']);
-        final includeAdminChannel = role == UserRoles.admin;
-        final recipientIds = includeAdminChannel
-            ? [user.uid, NotificationService.adminChannelRecipientId]
-            : [user.uid];
+    final body = StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirestoreRefs.notifications()
+          .where('recipientId', isEqualTo: user.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirestoreRefs.notifications()
-              .where('recipientId', whereIn: recipientIds)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(FirestoreErrorHandler.toUserMessage(snapshot.error!)),
+          );
+        }
 
-            if (snapshot.hasError) {
-              return Center(
-                child: Text(
-                  FirestoreErrorHandler.toUserMessage(snapshot.error!),
-                ),
-              );
-            }
+        final docs = [
+          ...(snapshot.data?.docs ?? []),
+        ].where((doc) {
+          return (doc.data()['recipientId'] ?? '').toString() == user.uid;
+        }).toList();
+        docs.sort((a, b) {
+          final aTs = a.data()['createdAt'] as Timestamp?;
+          final bTs = b.data()['createdAt'] as Timestamp?;
+          final aMs = aTs?.millisecondsSinceEpoch ?? 0;
+          final bMs = bTs?.millisecondsSinceEpoch ?? 0;
+          return bMs.compareTo(aMs);
+        });
+        if (docs.isEmpty) {
+          if (kIsWeb) {
+            return const Center(child: Text('No notifications yet.'));
+          }
+          return const MobileEmptyState(
+            title: 'No notifications yet.',
+            icon: Icons.notifications_none,
+            subtitle:
+                'You\u2019ll be notified about bookings,\nmessages, and important updates here.',
+          );
+        }
 
-            final docs = [...(snapshot.data?.docs ?? [])];
-            docs.sort((a, b) {
-              final aTs = a.data()['createdAt'] as Timestamp?;
-              final bTs = b.data()['createdAt'] as Timestamp?;
-              final aMs = aTs?.millisecondsSinceEpoch ?? 0;
-              final bMs = bTs?.millisecondsSinceEpoch ?? 0;
-              return bMs.compareTo(aMs);
-            });
-            if (docs.isEmpty) {
-              if (kIsWeb) {
-                return const Center(child: Text('No notifications yet.'));
-              }
-              return const MobileEmptyState(
-                title: 'No notifications yet.',
-                icon: Icons.notifications_none,
-                subtitle:
-                    'You\u2019ll be notified about bookings,\nmessages, and important updates here.',
-              );
-            }
-
-            return Column(
-              children: [
-                _toolbar(context, docs),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: docs.length,
-                    itemBuilder: (context, index) {
-                      final doc = docs[index];
-                      final data = doc.data();
-                      final title = (data['title'] ?? 'Notification')
-                          .toString();
-                      final body = (data['body'] ?? '').toString();
-                      final isRead = (data['isRead'] ?? false) == true;
-                      final type = (data['type'] ?? 'general').toString();
-                      final createdAt = data['createdAt'] as Timestamp?;
-                      return NotificationListItem(
-                        title: title,
-                        body: body,
-                        type: type,
-                        timeLabel: createdAt == null
-                            ? ''
-                            : _timeLabel(createdAt),
-                        isRead: isRead,
-                        onOpen: () => _showNotificationDetails(context, doc),
-                        onViewDetails: () =>
-                            _showNotificationDetails(context, doc),
-                        onRemove: () => _deleteNotification(context, doc.id),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            );
-          },
+        return Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final doc = docs[index];
+                  final data = doc.data();
+                  final title = (data['title'] ?? 'Notification').toString();
+                  final body = (data['body'] ?? '').toString();
+                  final isRead = (data['isRead'] ?? false) == true;
+                  final type = (data['type'] ?? 'general').toString();
+                  final createdAt = data['createdAt'] as Timestamp?;
+                  return NotificationListItem(
+                    title: title,
+                    body: body,
+                    type: type,
+                    timeLabel: createdAt == null ? '' : _timeLabel(createdAt),
+                    isRead: isRead,
+                    onOpen: () => _showNotificationDetails(context, doc),
+                    onViewDetails: () => _showNotificationDetails(context, doc),
+                    onRemove: () => _deleteNotification(context, doc.id),
+                  );
+                },
+              ),
+            ),
+            _toolbar(context, docs),
+          ],
         );
       },
     );

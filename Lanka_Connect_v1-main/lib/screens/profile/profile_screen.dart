@@ -14,6 +14,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/app_feedback.dart';
+import '../../utils/sri_lanka_locations.dart';
 import '../../utils/user_roles.dart';
 import '../../utils/validators.dart';
 
@@ -37,84 +38,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     'Tutoring',
     'Other',
   ];
-  static const List<String> _districtOptions = [
-    'Ampara',
-    'Anuradhapura',
-    'Badulla',
-    'Batticaloa',
-    'Colombo',
-    'Galle',
-    'Gampaha',
-    'Hambantota',
-    'Jaffna',
-    'Kalutara',
-    'Kandy',
-    'Kegalle',
-    'Kilinochchi',
-    'Kurunegala',
-    'Mannar',
-    'Matale',
-    'Matara',
-    'Monaragala',
-    'Mullaitivu',
-    'Nuwara Eliya',
-    'Polonnaruwa',
-    'Puttalam',
-    'Ratnapura',
-    'Trincomalee',
-    'Vavuniya',
-  ];
-  static const Map<String, List<String>> _cityByDistrict = {
-    'Ampara': ['Ampara', 'Kalmunai', 'Akkaraipattu', 'Sainthamaruthu'],
-    'Anuradhapura': [
-      'Anuradhapura',
-      'Kekirawa',
-      'Medawachchiya',
-      'Tambuttegama',
-    ],
-    'Badulla': ['Badulla', 'Bandarawela', 'Ella', 'Mahiyanganaya'],
-    'Batticaloa': ['Batticaloa', 'Kattankudy', 'Eravur', 'Valachchenai'],
-    'Colombo': [
-      'Colombo 01',
-      'Colombo 03',
-      'Colombo 05',
-      'Colombo 07',
-      'Dehiwala',
-      'Nugegoda',
-      'Maharagama',
-      'Rajagiriya',
-      'Battaramulla',
-      'Kotte',
-      'Mount Lavinia',
-    ],
-    'Galle': ['Galle', 'Hikkaduwa', 'Ambalangoda', 'Karapitiya'],
-    'Gampaha': [
-      'Gampaha',
-      'Negombo',
-      'Kadawatha',
-      'Ja-Ela',
-      'Wattala',
-      'Kelaniya',
-    ],
-    'Hambantota': ['Hambantota', 'Tangalle', 'Beliatta', 'Kataragama'],
-    'Jaffna': ['Jaffna', 'Chavakachcheri', 'Nallur', 'Point Pedro'],
-    'Kalutara': ['Kalutara', 'Panadura', 'Horana', 'Beruwala'],
-    'Kandy': ['Kandy', 'Peradeniya', 'Katugastota', 'Gampola'],
-    'Kegalle': ['Kegalle', 'Mawanella', 'Warakapola', 'Rambukkana'],
-    'Kilinochchi': ['Kilinochchi', 'Poonakary', 'Paranthan'],
-    'Kurunegala': ['Kurunegala', 'Kuliyapitiya', 'Narammala', 'Pannala'],
-    'Mannar': ['Mannar', 'Murunkan', 'Madhu', 'Pesalai'],
-    'Matale': ['Matale', 'Dambulla', 'Galewela', 'Ukuwela'],
-    'Matara': ['Matara', 'Weligama', 'Akuressa', 'Dikwella'],
-    'Monaragala': ['Monaragala', 'Wellawaya', 'Bibile', 'Kataragama'],
-    'Mullaitivu': ['Mullaitivu', 'Oddusuddan', 'Puthukudiyiruppu'],
-    'Nuwara Eliya': ['Nuwara Eliya', 'Hatton', 'Talawakele', 'Ginigathhena'],
-    'Polonnaruwa': ['Polonnaruwa', 'Kaduruwela', 'Hingurakgoda'],
-    'Puttalam': ['Puttalam', 'Chilaw', 'Wennappuwa', 'Marawila'],
-    'Ratnapura': ['Ratnapura', 'Embilipitiya', 'Balangoda', 'Pelmadulla'],
-    'Trincomalee': ['Trincomalee', 'Kinniya', 'Kantale', 'Nilaveli'],
-    'Vavuniya': ['Vavuniya', 'Nedunkeni', 'Cheddikulam'],
-  };
 
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
@@ -328,8 +251,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _imageUrl = (data['imageUrl'] ?? authImage).toString();
     _nameController.text = (data['name'] ?? '').toString();
     _contactController.text = (data['contact'] ?? '').toString();
-    _districtController.text = (data['district'] ?? '').toString();
-    _cityController.text = (data['city'] ?? '').toString();
+    final district = (data['district'] ?? '').toString().trim();
+    _districtController.text = SriLankaLocations.districts.contains(district)
+        ? district
+        : '';
+    final city = (data['city'] ?? '').toString().trim();
+    _cityController.text = _cityOptionsForDistrict(_districtController.text)
+            .contains(city)
+        ? city
+        : '';
     _bioController.text = (data['bio'] ?? '').toString();
 
     final skills = List<String>.from(data['skills'] ?? const []);
@@ -342,13 +272,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   List<String> _cityOptionsForDistrict(String district) {
-    final selected = district.trim();
-    if (selected.isNotEmpty && _cityByDistrict.containsKey(selected)) {
-      return [..._cityByDistrict[selected]!];
-    }
-    final cities = _cityByDistrict.values.expand((values) => values).toSet();
-    final ordered = cities.toList()..sort();
-    return ordered;
+    return SriLankaLocations.citiesForDistrict(district);
   }
 
   @override
@@ -437,7 +361,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         decoration: const InputDecoration(
                           labelText: 'District',
                         ),
-                        items: _districtOptions
+                        items: SriLankaLocations.districts
                             .map(
                               (district) => DropdownMenuItem<String>(
                                 value: district,

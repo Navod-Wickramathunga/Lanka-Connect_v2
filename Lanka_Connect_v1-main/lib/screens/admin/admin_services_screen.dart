@@ -216,13 +216,29 @@ class _AdminServicesScreenState extends State<AdminServicesScreen> {
                                 ),
                               ],
                             )
-                          : Chip(
-                              label: Text(
-                                status[0].toUpperCase() + status.substring(1),
-                              ),
-                              backgroundColor: status == 'approved'
-                                  ? Colors.green.shade50
-                                  : Colors.red.shade50,
+                          : Builder(
+                              builder: (context) {
+                                final isApproved = status == 'approved';
+                                final chipColor = isApproved
+                                    ? Colors.green
+                                    : Colors.red;
+                                return Chip(
+                                  label: Text(
+                                    status[0].toUpperCase() +
+                                        status.substring(1),
+                                    style: TextStyle(
+                                      color: chipColor.shade700,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  side: BorderSide(
+                                    color: chipColor.withValues(alpha: 0.28),
+                                  ),
+                                  backgroundColor: chipColor.withValues(
+                                    alpha: 0.14,
+                                  ),
+                                );
+                              },
                             ),
                     ),
                   );

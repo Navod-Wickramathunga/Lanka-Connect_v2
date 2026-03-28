@@ -19,15 +19,14 @@ void main() {
       ),
     );
 
-    final markAll = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Mark all read'),
-    );
-    final clearAll = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Clear all'),
+    final markAll = tester.widget<IconButton>(find.byIcon(Icons.done_all));
+    final clearAll = tester.widget<IconButton>(
+      find.byIcon(Icons.delete_sweep_outlined),
     );
 
     expect(markAll.onPressed, isNull);
     expect(clearAll.onPressed, isNull);
+    expect(find.text('All caught up'), findsOneWidget);
   });
 
   testWidgets('notification toolbar triggers mark all read and clear all', (
@@ -47,13 +46,14 @@ void main() {
       ),
     );
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Mark all read'));
+    await tester.tap(find.byTooltip('Mark all read'));
     await tester.pump();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Clear all'));
+    await tester.tap(find.byTooltip('Clear all'));
     await tester.pump();
 
     expect(markAllTapped, 1);
     expect(clearAllTapped, 1);
+    expect(find.text('Clear all'), findsOneWidget);
   });
 
   testWidgets('notification list item opens popup actions and tap callback', (

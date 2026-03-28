@@ -14,27 +14,90 @@ class NotificationToolbar extends StatelessWidget {
   final VoidCallback? onMarkAllRead;
   final VoidCallback? onClearAll;
 
+  void _runAction(
+    BuildContext context, {
+    required String label,
+    required VoidCallback? callback,
+  }) {
+    if (callback == null) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(label),
+          duration: const Duration(milliseconds: 900),
+        ),
+      );
+    callback();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        alignment: WrapAlignment.spaceBetween,
-        children: [
-          Chip(label: Text('Unread: $unreadCount')),
-          OutlinedButton.icon(
-            onPressed: unreadCount == 0 ? null : onMarkAllRead,
-            icon: const Icon(Icons.done_all),
-            label: const Text('Mark all read'),
+    final scheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: scheme.outlineVariant),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
-          OutlinedButton.icon(
-            onPressed: hasNotifications ? onClearAll : null,
-            icon: const Icon(Icons.delete_sweep_outlined),
-            label: const Text('Clear all'),
+          child: Row(
+            children: [
+              Tooltip(
+                message: 'Mark all read',
+                child: IconButton(
+                  onPressed: unreadCount == 0
+                      ? null
+                      : () => _runAction(
+                          context,
+                          label: 'Mark all read',
+                          callback: onMarkAllRead,
+                        ),
+                  icon: const Icon(Icons.done_all),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    unreadCount == 0
+                        ? 'All caught up'
+                        : '$unreadCount unread notifications',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              Tooltip(
+                message: 'Clear all',
+                child: IconButton(
+                  onPressed: hasNotifications
+                      ? () => _runAction(
+                          context,
+                          label: 'Clear all',
+                          callback: onClearAll,
+                        )
+                      : null,
+                  icon: const Icon(Icons.delete_sweep_outlined),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

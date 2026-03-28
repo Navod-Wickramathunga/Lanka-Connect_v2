@@ -536,24 +536,29 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
                 // 1: Category chips
                 if (!widget.showOnlyMine) {
                   if (index == cursor) {
-                    return SizedBox(
-                      height: 48,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        children: _quickCategories.map((category) {
-                          final selected =
-                              _category.toLowerCase() == category.toLowerCase();
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: FilterChip(
-                              selected: selected,
-                              showCheckmark: false,
-                              label: Text(category),
-                              onSelected: (_) => _toggleQuickCategory(category),
-                            ),
-                          );
-                        }).toList(),
+                    return Material(
+                      color: Colors.transparent,
+                      child: SizedBox(
+                        height: 48,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          children: _quickCategories.map((category) {
+                            final selected =
+                                _category.toLowerCase() ==
+                                category.toLowerCase();
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: FilterChip(
+                                selected: selected,
+                                showCheckmark: false,
+                                label: Text(category),
+                                onSelected: (_) =>
+                                    _toggleQuickCategory(category),
+                              ),
+                            );
+                          }).toList(),
+                        ),
                       ),
                     );
                   }
@@ -854,7 +859,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
                             ServiceMapPreview(
                               point: point,
                               title: (data['title'] ?? 'Service').toString(),
-                              height: 130,
+                              height: kIsWeb ? 156 : 130,
                               onTap: () => Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (_) => ServiceMapScreen(

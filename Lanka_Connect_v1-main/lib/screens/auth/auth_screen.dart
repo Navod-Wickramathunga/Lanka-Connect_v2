@@ -550,9 +550,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   String _mobileSupportText() {
-    if (_isLogin) {
-      return 'Choose your portal and continue with the same Lanka Connect account.';
-    }
+    if (_isLogin) return '';
     return 'Create a seeker or provider account to book services or offer your skills.';
   }
 
@@ -1364,78 +1362,97 @@ class _AuthScreenState extends State<AuthScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFF062F33),
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF148189), Color(0xFF0C5960), Color(0xFF062F33)],
+      body: Stack(
+        children: [
+          Container(
+            width: double.infinity,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF148189),
+                  Color(0xFF0C5960),
+                  Color(0xFF062F33),
+                ],
+              ),
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight - 52,
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        'Lanka Connect',
-                        key: const Key('auth_mobile_title'),
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.headlineMedium
-                            ?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                            ),
-                      ),
-                      if (FirebaseEnv.backendLabel().isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.25),
-                            ),
-                          ),
-                          child: Text(
-                            FirebaseEnv.backendLabel(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
+          Positioned(
+            top: -120,
+            left: -60,
+            child: Container(
+              width: 260,
+              height: 260,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.09),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -160,
+            right: -90,
+            child: Container(
+              width: 280,
+              height: 280,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.black.withValues(alpha: 0.08),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - 52,
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'Lanka Connect',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                color: Colors.white.withValues(alpha: 0.95),
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.3,
+                              ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Community Portal Login',
+                          key: const Key('auth_mobile_title'),
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                        ),
+                        const SizedBox(height: 30),
+                        _buildMobileFormShell(
+                          child: AnimatedSwitcher(
+                            key: const Key('auth_mobile_panel'),
+                            duration: const Duration(milliseconds: 220),
+                            child: KeyedSubtree(
+                              key: ValueKey('mobile|$_mode'),
+                              child: _buildAuthForm(webLayout: false),
                             ),
                           ),
                         ),
                       ],
-                      const SizedBox(height: 28),
-                      _buildMobileFormShell(
-                        child: AnimatedSwitcher(
-                          key: const Key('auth_mobile_panel'),
-                          duration: const Duration(milliseconds: 220),
-                          child: KeyedSubtree(
-                            key: ValueKey('mobile|$_mode'),
-                            child: _buildAuthForm(webLayout: false),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -1454,23 +1471,49 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
             const SizedBox(height: 28),
             Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Text(
                   _mobileHeadline(),
+                  textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                     color: const Color(0xFF101828),
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  _mobileSupportText(),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF667085),
-                    height: 1.45,
+                if (FirebaseEnv.backendLabel().isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEAF7F7),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: const Color(0xFFCDE9EA)),
+                    ),
+                    child: Text(
+                      'Environment: ${FirebaseEnv.backendLabel()}',
+                      style: const TextStyle(
+                        color: Color(0xFF148189),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
-                ),
+                ],
+                if (_mobileSupportText().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    _mobileSupportText(),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFF667085),
+                      height: 1.45,
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 22),
@@ -1485,6 +1528,8 @@ class _AuthScreenState extends State<AuthScreen> {
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
+                style: const TextStyle(color: Colors.black87),
+                cursorColor: const Color(0xFF101828),
                 autofillHints: const [
                   AutofillHints.username,
                   AutofillHints.email,
@@ -1503,6 +1548,8 @@ class _AuthScreenState extends State<AuthScreen> {
               child: TextFormField(
                 controller: _passwordController,
                 textInputAction: TextInputAction.done,
+                style: const TextStyle(color: Colors.black87),
+                cursorColor: const Color(0xFF101828),
                 autofillHints: _isLogin
                     ? const [AutofillHints.password]
                     : const [AutofillHints.newPassword],
@@ -1520,6 +1567,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     },
                     icon: Icon(
                       _showPassword ? Icons.visibility_off : Icons.visibility,
+                      color: const Color(0xFF98A2B3),
                     ),
                   ),
                 ),
@@ -1575,6 +1623,18 @@ class _AuthScreenState extends State<AuthScreen> {
             const SizedBox(height: 14),
             FocusTraversalOrder(
               order: const NumericFocusOrder(7),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : _continueAsGuest,
+                  style: _guestActionButtonStyle(false),
+                  child: const Text('Continue as Guest'),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            FocusTraversalOrder(
+              order: const NumericFocusOrder(8),
               child: TextButton(
                 onPressed: _loading
                     ? null
@@ -1585,18 +1645,6 @@ class _AuthScreenState extends State<AuthScreen> {
                   _isLogin
                       ? 'Need an account? Sign up here'
                       : 'Already have an account? Sign in',
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            FocusTraversalOrder(
-              order: const NumericFocusOrder(8),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _loading ? null : _continueAsGuest,
-                  style: _guestActionButtonStyle(false),
-                  child: const Text('Continue as Guest'),
                 ),
               ),
             ),

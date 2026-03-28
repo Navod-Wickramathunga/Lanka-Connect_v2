@@ -294,7 +294,14 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['isRead', 'readAt'])
         && request.resource.data.isRead == true;
 
-      allow delete: if false;
+      allow delete: if signedIn()
+        && (
+          resource.data.recipientId == request.auth.uid ||
+          (
+            isAdmin() &&
+            resource.data.recipientId == '__admins__'
+          )
+        );
     }
 
     match /payments/{paymentId} {

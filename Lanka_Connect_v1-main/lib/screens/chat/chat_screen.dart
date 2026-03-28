@@ -632,12 +632,6 @@ class _ChatBubble extends StatelessWidget {
     final crossAlignment = isMine
         ? CrossAxisAlignment.end
         : CrossAxisAlignment.start;
-    final rowAlignment = isMine
-        ? MainAxisAlignment.end
-        : MainAxisAlignment.start;
-    final margin = isMine
-        ? const EdgeInsets.only(left: 64, right: 4, top: 2, bottom: 2)
-        : const EdgeInsets.only(right: 64, left: 4, top: 2, bottom: 2);
     final borderRadius = BorderRadius.only(
       topLeft: const Radius.circular(12),
       topRight: const Radius.circular(12),
@@ -645,12 +639,9 @@ class _ChatBubble extends StatelessWidget {
       bottomRight: isMine ? Radius.zero : const Radius.circular(12),
     );
 
-    final maxBubbleWidth = MediaQuery.of(context).size.width * 0.76;
-
     return Container(
-      margin: margin,
+      margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       child: Row(
-        mainAxisAlignment: rowAlignment,
         children: [
           if (!isMine) ...[
             CircleAvatar(
@@ -669,66 +660,79 @@ class _ChatBubble extends StatelessWidget {
             ),
             const SizedBox(width: 6),
           ],
-          ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxBubbleWidth),
-            child: Column(
-              crossAxisAlignment: crossAlignment,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: bubbleColor,
-                    borderRadius: borderRadius,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.06),
-                        blurRadius: 2,
-                        offset: const Offset(0, 1),
+          Expanded(
+            child: Align(
+              alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.68,
+                ),
+                child: Column(
+                  crossAxisAlignment: crossAlignment,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
                       ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (senderName != null && !isMine)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            senderName!,
+                      decoration: BoxDecoration(
+                        color: bubbleColor,
+                        borderRadius: borderRadius,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.06),
+                            blurRadius: 2,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (senderName != null && !isMine)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                senderName!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                  color: isDark
+                                      ? const Color(0xFF53BDEB)
+                                      : const Color(0xFF075E54),
+                                ),
+                              ),
+                            ),
+                          Text(
+                            text,
+                            softWrap: true,
                             style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 12,
-                              color: isDark
-                                  ? const Color(0xFF53BDEB)
-                                  : const Color(0xFF075E54),
+                              fontSize: 15,
+                              color: textColor,
+                              height: 1.3,
                             ),
                           ),
-                        ),
-                      Text(
-                        text,
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: textColor,
-                          height: 1.3,
-                        ),
+                          if (time.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Align(
+                              alignment: Alignment.bottomRight,
+                              child: Text(
+                                time,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: timeColor,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                      if (time.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.bottomRight,
-                          child: Text(
-                            time,
-                            style: TextStyle(fontSize: 11, color: timeColor),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
           if (isMine) ...[

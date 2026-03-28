@@ -13,7 +13,6 @@ import '../../utils/demo_data_service.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/firebase_env.dart';
-import '../../utils/notification_service.dart';
 import '../../utils/presence_service.dart';
 import '../../utils/profile_identity.dart';
 import '../../utils/user_roles.dart';
@@ -110,12 +109,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String uid,
     required String role,
   }) {
-    if (role == UserRoles.admin) {
-      return FirestoreRefs.notifications().where(
-        'recipientId',
-        whereIn: [uid, NotificationService.adminChannelRecipientId],
-      );
-    }
     return FirestoreRefs.notifications().where('recipientId', isEqualTo: uid);
   }
 
@@ -950,32 +943,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF0F766E), Color(0xFF1E293B)],
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.pets, color: Colors.white),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Tiger tip: jump to any section from here instead of scrolling through the app.',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
                 ...List.generate(mobileRoutes.length, (index) {
                   final route = mobileRoutes[index];
                   final active = index == selectedIndex;
