@@ -164,25 +164,6 @@ class ServiceDetailScreen extends StatelessWidget {
     );
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> _providerBookingsOnDate(
-    String providerId,
-    String scheduledDateKey,
-  ) {
-    return FirestoreRefs.bookings()
-        .where('providerId', isEqualTo: providerId)
-        .where('scheduledDateKey', isEqualTo: scheduledDateKey)
-        .snapshots();
-  }
-
-  int _activeBookingCount(
-    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-  ) {
-    return docs.where((doc) {
-      final status = (doc.data()['status'] ?? '').toString().toLowerCase();
-      return status == 'pending' || status == 'accepted';
-    }).length;
-  }
-
   Future<void> _createBooking(
     BuildContext context,
     String serviceId,
@@ -456,7 +437,7 @@ class ServiceDetailScreen extends StatelessWidget {
                       const SizedBox(height: 12),
                       if (isBooking)
                         DropdownButtonFormField<String>(
-                          value: selectedWindow,
+                          initialValue: selectedWindow,
                           decoration: const InputDecoration(
                             labelText: 'Preferred time window',
                           ),
@@ -518,48 +499,23 @@ class ServiceDetailScreen extends StatelessWidget {
                       ),
                       if (selectedDateKey != null) ...[
                         const SizedBox(height: 12),
-                        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                          stream: _providerBookingsOnDate(
-                            providerId,
-                            selectedDateKey,
-                          ),
-                          builder: (context, snapshot) {
+                        Builder(
+                          builder: (context) {
                             final scheme = Theme.of(context).colorScheme;
-                            final hasError = snapshot.hasError;
-                            final busyCount = hasError
-                                ? 0
-                                : _activeBookingCount(snapshot.data?.docs ?? []);
-                            final isAvailable = !hasError && busyCount == 0;
                             final isDark =
                                 Theme.of(context).brightness == Brightness.dark;
-                            final background = hasError
-                                ? scheme.surfaceContainerHighest
-                                : isAvailable
-                                ? (isDark
-                                      ? const Color(0xFF052E2B)
-                                      : const Color(0xFFECFDF5))
-                                : (isDark
-                                      ? const Color(0xFF3F2A08)
-                                      : const Color(0xFFFFF7ED));
-                            final border = hasError
-                                ? scheme.outlineVariant
-                                : isAvailable
-                                ? const Color(0xFF10B981)
-                                : const Color(0xFFF59E0B);
-                            final foreground = hasError
-                                ? scheme.onSurface
-                                : isAvailable
-                                ? (isDark
-                                      ? const Color(0xFFA7F3D0)
-                                      : const Color(0xFF047857))
-                                : (isDark
-                                      ? const Color(0xFFFDE68A)
-                                      : const Color(0xFFB45309));
-                            final message = hasError
-                                ? 'Provider availability could not be loaded. You can still send the booking or request.'
-                                : isAvailable
-                                ? 'Provider looks free on the selected date.'
-                                : 'Provider already has $busyCount active job(s) on this date.';
+                            final background = isDark
+                                ? const Color(0xFF0F2230)
+                                : const Color(0xFFEFF6FF);
+                            final border = isDark
+                                ? const Color(0xFF2E4C66)
+                                : const Color(0xFF93C5FD);
+                            final foreground = isDark
+                                ? const Color(0xFFBFDBFE)
+                                : const Color(0xFF1D4ED8);
+                            final message = isBooking
+                                ? 'Availability is confirmed after you send the booking request. The provider will review the selected date and time window.'
+                                : 'Your requested date and time will be sent to the provider for confirmation.';
 
                             return Container(
                               padding: const EdgeInsets.all(12),
@@ -570,20 +526,13 @@ class ServiceDetailScreen extends StatelessWidget {
                               ),
                               child: Row(
                                 children: [
-                                  Icon(
-                                    hasError
-                                        ? Icons.info_outline
-                                        : isAvailable
-                                        ? Icons.check_circle_outline
-                                        : Icons.schedule,
-                                    color: foreground,
-                                  ),
+                                  Icon(Icons.info_outline, color: foreground),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
                                       message,
                                       style: TextStyle(
-                                        color: foreground,
+                                        color: scheme.onSurface,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
@@ -860,35 +809,6 @@ class ServiceDetailScreen extends StatelessWidget {
               ),
             );
           },
-        );
-      },
-    );
-  }
-
-  Widget _statChip(IconData icon, String label) {
-    return Builder(
-      builder: (context) {
-        final scheme = Theme.of(context).colorScheme;
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 14, color: scheme.onSurfaceVariant),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: scheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
         );
       },
     );

@@ -332,7 +332,7 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               key: const Key('service_editor_field_category'),
-              value: _selectedCategory,
+              initialValue: _selectedCategory,
               decoration: const InputDecoration(labelText: 'Category'),
               items: _categories
                   .map((cat) => DropdownMenuItem(value: cat, child: Text(cat)))

@@ -298,7 +298,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ? NetworkImage(_imageUrl)
                           : null,
                       onBackgroundImageError: _imageUrl.isNotEmpty
-                          ? (_, __) {}
+                          ? (exception, stackTrace) {}
                           : null,
                       child: _imageUrl.isEmpty
                           ? const Icon(Icons.person)

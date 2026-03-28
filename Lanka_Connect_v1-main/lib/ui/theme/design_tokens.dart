@@ -32,6 +32,9 @@ class DesignTokens {
     Color(0xFF0F766E),
     Color(0xFF0F172A),
   ];
+  static const Color authMobileSegmentSelected = Color(0xFF0A6E73);
+  static const Color authMobileGuestSurface = Color(0xFFE7F3F4);
+  static const Color authMobileGuestText = Color(0xFF0F4C52);
 
   // Web auth revamp tokens (warm trust direction)
   static const List<Color> authWebBackgroundGradient = [
