@@ -6,7 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:lanka_connect/firebase_options.dart';
+import 'package:lanka_connect/firebase_options_selector.dart';
 import 'package:lanka_connect/utils/demo_data_service.dart';
 // review_service import removed — aggregate tested via Firestore directly
 
@@ -300,9 +300,7 @@ void main() {
 
 Future<void> _initFirebase() async {
   if (Firebase.apps.isEmpty) {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    await Firebase.initializeApp(options: currentOptionsForEnv());
   }
 }
 

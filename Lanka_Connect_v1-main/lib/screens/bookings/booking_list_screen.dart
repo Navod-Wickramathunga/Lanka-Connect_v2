@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../ui/mobile/mobile_components.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
@@ -49,6 +50,11 @@ class BookingListScreen extends StatelessWidget {
     if (value.isEmpty) return 'Unknown';
     final take = value.length < length ? value.length : length;
     return value.substring(0, take);
+  }
+
+  String _formatScheduledDate(dynamic value) {
+    if (value is! Timestamp) return '';
+    return DateFormat('EEE, d MMM yyyy').format(value.toDate().toLocal());
   }
 
   Future<void> _confirmCancel(
@@ -302,6 +308,14 @@ class BookingListScreen extends StatelessWidget {
                 final amount = (data['amount'] is num)
                     ? (data['amount'] as num).toDouble()
                     : null;
+                final scheduledDateLabel = _formatScheduledDate(
+                  data['scheduledDate'],
+                );
+                final timeWindow = (data['timeWindow'] ?? '').toString().trim();
+                final requestedTimeLabel = (data['requestedTimeLabel'] ?? '')
+                    .toString()
+                    .trim();
+                final notes = (data['notes'] ?? '').toString().trim();
                 final statusColor = _colorForStatus(status);
                 final isTerminalStatus = const [
                   'completed',
@@ -518,12 +532,33 @@ class BookingListScreen extends StatelessWidget {
                             const SizedBox(height: 10),
                             if (location.trim().isNotEmpty)
                               _infoRow(context, Icons.location_on, location),
+                            if (scheduledDateLabel.isNotEmpty)
+                              _infoRow(
+                                context,
+                                Icons.event_outlined,
+                                scheduledDateLabel,
+                              ),
+                            if (requestedTimeLabel.isNotEmpty)
+                              _infoRow(
+                                context,
+                                Icons.schedule_outlined,
+                                requestedTimeLabel,
+                              ),
+                            if (timeWindow.isNotEmpty)
+                              _infoRow(context, Icons.access_time, timeWindow),
                             if (amount != null)
                               _infoRow(
                                 context,
                                 Icons.payments,
                                 'LKR ${amount.toStringAsFixed(0)}',
                               ),
+                            if (notes.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                notes,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
                             const Divider(height: 20),
                             // Action buttons
                             Wrap(

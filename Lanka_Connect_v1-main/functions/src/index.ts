@@ -12,8 +12,34 @@ import sgMail from "@sendgrid/mail";
 
 initializeApp();
 const db = getFirestore();
+const NOTIFICATION_CHANNEL_ID = "lanka_connect_notifications_soft";
+const NOTIFICATION_SOUND = "soft_notification";
 
 setGlobalOptions({maxInstances: 10});
+
+function buildPushData(
+  notificationId: string,
+  type: string,
+  payload: unknown
+): Record<string, string> {
+  const data: Record<string, string> = {
+    notificationId,
+    type,
+  };
+
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return data;
+  }
+
+  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+    if (value === null || value === undefined) {
+      continue;
+    }
+    data[key] = typeof value === "string" ? value : JSON.stringify(value);
+  }
+
+  return data;
+}
 
 export const setServicePendingOnCreate = onDocumentCreated("services/{serviceId}", async (event) => {
   const snapshot = event.data;
@@ -307,13 +333,31 @@ export const sendPushOnNotificationCreate = onDocumentCreated(
         }
 
         if (tokens.length > 0) {
+          const pushData = buildPushData(
+            event.params.notificationId,
+            (data.type ?? "general").toString(),
+            data.data
+          );
           try {
             const response = await getMessaging().sendEachForMulticast({
               tokens,
               notification: {title, body},
-              data: {
-                notificationId: event.params.notificationId,
-                type: (data.type ?? "general").toString(),
+              data: pushData,
+              android: {
+                priority: "high",
+                notification: {
+                  channelId: NOTIFICATION_CHANNEL_ID,
+                  priority: "high",
+                  sound: NOTIFICATION_SOUND,
+                },
+              },
+              apns: {
+                payload: {
+                  aps: {
+                    badge: 1,
+                    sound: "default",
+                  },
+                },
               },
             });
             logger.info("Sent admin push notifications", {
@@ -339,18 +383,21 @@ export const sendPushOnNotificationCreate = onDocumentCreated(
     }
 
     try {
+      const pushData = buildPushData(
+        event.params.notificationId,
+        (data.type ?? "general").toString(),
+        data.data
+      );
       await getMessaging().send({
         token: fcmToken,
         notification: {title, body},
-        data: {
-          notificationId: event.params.notificationId,
-          type: (data.type ?? "general").toString(),
-        },
+        data: pushData,
         android: {
           priority: "high",
           notification: {
-            channelId: "lanka_connect_notifications",
+            channelId: NOTIFICATION_CHANNEL_ID,
             priority: "high",
+            sound: NOTIFICATION_SOUND,
           },
         },
         apns: {

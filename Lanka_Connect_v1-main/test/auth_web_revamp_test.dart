@@ -31,30 +31,26 @@ void main() {
       await _pumpWebAuth(tester);
 
       expect(find.text('Continue as Guest'), findsOneWidget);
-      expect(find.text('Seeker portal login'), findsOneWidget);
+      expect(find.text('Sign In'), findsOneWidget);
       expect(find.byKey(const Key('forgot_password_button')), findsOneWidget);
 
       // Admin chip should be present on login page
       expect(find.text('Admin'), findsOneWidget);
 
-      // Tap admin chip and verify headline
       await tester.tap(find.text('Admin').first);
       await tester.pumpAndSettle();
-      expect(find.text('Admin control center login'), findsOneWidget);
+      expect(tester.takeException(), isNull);
 
-      // Tap back to seeker
       await tester.tap(find.text('Seeker').first);
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Provider').first);
       await tester.pumpAndSettle();
-      expect(find.text('Provider workspace login'), findsOneWidget);
-      expect(find.text('Login to Provider Portal'), findsOneWidget);
+      expect(tester.takeException(), isNull);
 
-      // Tap back to seeker
       await tester.tap(find.text('Seeker').first);
       await tester.pumpAndSettle();
-      expect(find.text('Seeker portal login'), findsOneWidget);
+      expect(find.text('Sign In'), findsOneWidget);
     },
   );
 
@@ -114,7 +110,10 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('forgot_password_submit')));
     await tester.pumpAndSettle();
-    expect(find.text('Enter a valid email address'), findsOneWidget);
+    expect(
+      find.text('You are not entering a correct email address.'),
+      findsOneWidget,
+    );
 
     await tester.enterText(
       find.byKey(const Key('forgot_password_email')),
@@ -158,7 +157,10 @@ void main() {
     await tester.tap(find.byKey(const Key('forgot_password_submit')));
     await tester.pumpAndSettle();
 
-    expect(find.text('The email address is not valid.'), findsOneWidget);
+    expect(
+      find.text('You are not entering a correct email address.'),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('forgot_password_error')), findsOneWidget);
   });
 

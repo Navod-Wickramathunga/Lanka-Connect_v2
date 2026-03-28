@@ -1058,11 +1058,20 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               ),
             ),
           if (_nearMeStatus == _NearMeStatus.serviceDisabled)
-            const Align(
+            Align(
               alignment: Alignment.centerLeft,
-              child: Text(
-                'Location services are disabled. Please enable GPS.',
-                style: TextStyle(fontSize: 12),
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  const Text(
+                    'Location services are disabled. Please enable GPS.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  TextButton(
+                    onPressed: Geolocator.openLocationSettings,
+                    child: const Text('Open Location Settings'),
+                  ),
+                ],
               ),
             ),
           if (_nearMeStatus == _NearMeStatus.denied)

@@ -403,6 +403,74 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _themeToggleAction() {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: AppThemeController.themeMode,
+      builder: (context, mode, _) {
+        final isDark = mode == ThemeMode.dark;
+        final scheme = Theme.of(context).colorScheme;
+        return IconButton(
+          onPressed: AppThemeController.toggleTheme,
+          tooltip: isDark ? 'Switch to light theme' : 'Switch to dark theme',
+          style: IconButton.styleFrom(
+            backgroundColor: isDark
+                ? scheme.surfaceContainerHighest
+                : DesignTokens.brandPrimary.withValues(alpha: 0.12),
+            foregroundColor: isDark
+                ? scheme.onSurface
+                : DesignTokens.brandPrimary,
+            side: BorderSide(
+              color: isDark
+                  ? scheme.outlineVariant
+                  : DesignTokens.brandPrimary.withValues(alpha: 0.25),
+            ),
+          ),
+          icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+        );
+      },
+    );
+  }
+
+  Widget _profileAvatarAction(
+    BuildContext context,
+    User user,
+    Map<String, dynamic> data,
+    String role,
+  ) {
+    final profileImageUrl = ProfileIdentity.profileImageUrlFrom(
+      data,
+      authUser: user,
+    );
+    final displayName = ProfileIdentity.displayNameFrom(data, authUser: user);
+    return InkWell(
+      onTap: () {
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const ProfileScreen()));
+      },
+      borderRadius: BorderRadius.circular(999),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: CircleAvatar(
+          radius: 18,
+          backgroundImage: profileImageUrl.isNotEmpty
+              ? NetworkImage(profileImageUrl)
+              : null,
+          onBackgroundImageError: profileImageUrl.isNotEmpty
+              ? (exception, stackTrace) {}
+              : null,
+          child: profileImageUrl.isEmpty
+              ? Text(
+                  displayName.isNotEmpty
+                      ? displayName[0].toUpperCase()
+                      : _roleLabel(role)[0].toUpperCase(),
+                )
+              : null,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -462,22 +530,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             pageTitle: routeLabel,
             pageSubtitle: subtitleParts.join(' | '),
             actions: [
-              ValueListenableBuilder<ThemeMode>(
-                valueListenable: AppThemeController.themeMode,
-                builder: (context, mode, _) {
-                  return IconButton(
-                    onPressed: AppThemeController.toggleTheme,
-                    tooltip: mode == ThemeMode.dark
-                        ? 'Switch to light theme'
-                        : 'Switch to dark theme',
-                    icon: Icon(
-                      mode == ThemeMode.dark
-                          ? Icons.light_mode
-                          : Icons.dark_mode,
-                    ),
-                  );
-                },
-              ),
+              _themeToggleAction(),
               if (role == UserRoles.admin && !FirebaseEnv.isProduction)
                 IconButton(
                   onPressed: _seeding ? null : _seedDemoData,
@@ -497,6 +550,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   tooltip: 'Create account',
                   icon: const Icon(Icons.person_add_alt_1),
                 ),
+              _profileAvatarAction(context, user, data, role),
               IconButton(
                 onPressed: () => FirebaseAuth.instance.signOut(),
                 icon: const Icon(Icons.logout),
@@ -560,22 +614,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
-              ValueListenableBuilder<ThemeMode>(
-                valueListenable: AppThemeController.themeMode,
-                builder: (context, mode, _) {
-                  return IconButton(
-                    onPressed: AppThemeController.toggleTheme,
-                    tooltip: mode == ThemeMode.dark
-                        ? 'Switch to light theme'
-                        : 'Switch to dark theme',
-                    icon: Icon(
-                      mode == ThemeMode.dark
-                          ? Icons.light_mode
-                          : Icons.dark_mode,
-                    ),
-                  );
-                },
-              ),
+              _themeToggleAction(),
               _notificationAction(user.uid, role),
               if (role == UserRoles.guest)
                 IconButton(
@@ -583,6 +622,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   tooltip: 'Create account',
                   icon: const Icon(Icons.person_add_alt_1),
                 ),
+              _profileAvatarAction(context, user, data, role),
             ],
           ),
           body: AnimatedSwitcher(
@@ -667,11 +707,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _showInfoDialog(String title, String body) {
+    final normalizedTitle = title == 'Release Notes - v1.0'
+        ? 'Release Notes - v1.1.2+4'
+        : title;
+    final normalizedBody = title == 'Release Notes - v1.0'
+        ? '- Refreshed mobile login experience and stronger email validation\n'
+              '- Web and mobile back navigation hardened across shared shells\n'
+              '- Provider request and booking cards now show seeker scheduling details\n'
+              '- Profile images sync across app and web, with district and city filtering for providers\n'
+              '- Notification center now supports remove, clear all, detail view, and related-page routing\n'
+              '- Mobile admin hides banner and promotion sections while web keeps them available\n'
+              '- Nearby services no longer require location permission at startup\n'
+              '- Added a softer notification sound for app alerts and Android push notifications'
+        : body;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
+        title: Text(normalizedTitle),
+        content: Text(normalizedBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
@@ -767,13 +820,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _navIcon(IconData icon, {required bool active, required String role}) {
     final accent = RoleVisuals.forRole(role).accent;
-    if (!active) return Icon(icon, size: 22);
+    if (!active) {
+      return AnimatedScale(
+        duration: const Duration(milliseconds: 200),
+        scale: 1,
+        child: Icon(icon, size: 22),
+      );
+    }
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.7, end: 1.0),
       duration: const Duration(milliseconds: 350),
       curve: Curves.elasticOut,
       builder: (context, scale, child) {
-        return Transform.scale(scale: scale, child: child);
+        return Transform.scale(
+          scale: scale,
+          child: AnimatedRotation(
+            duration: const Duration(milliseconds: 260),
+            turns: active ? 0.02 : 0,
+            child: child,
+          ),
+        );
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
@@ -1056,7 +1122,7 @@ class _DrawerQuickStats extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Lanka Connect v1.1.1',
+            'Lanka Connect v1.1.2',
             style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
           ),
         ],

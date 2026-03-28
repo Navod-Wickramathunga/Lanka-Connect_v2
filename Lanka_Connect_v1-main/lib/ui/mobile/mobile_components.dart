@@ -51,14 +51,32 @@ class MobileGradientHeader extends StatelessWidget {
       child: Row(
         children: [
           if (showBackButton) ...[
-            IconButton(
-              onPressed:
-                  onBackPressed ?? () => Navigator.of(context).maybePop(),
-              icon: Icon(
-                Icons.arrow_back,
-                color: Theme.of(context).colorScheme.onPrimary,
-              ),
-              tooltip: 'Back',
+            Builder(
+              builder: (context) {
+                final navigator = Navigator.maybeOf(context);
+                final rootNavigator = Navigator.maybeOf(
+                  context,
+                  rootNavigator: true,
+                );
+                return IconButton(
+                  onPressed:
+                      onBackPressed ??
+                      () async {
+                        if (navigator != null && await navigator.maybePop()) {
+                          return;
+                        }
+                        if (rootNavigator != null &&
+                            rootNavigator != navigator) {
+                          await rootNavigator.maybePop();
+                        }
+                      },
+                  icon: Icon(
+                    Icons.arrow_back,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                  tooltip: 'Back',
+                );
+              },
             ),
             const SizedBox(width: 4),
           ],

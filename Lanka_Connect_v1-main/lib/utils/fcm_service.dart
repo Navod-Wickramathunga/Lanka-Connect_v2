@@ -5,15 +5,21 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'firestore_refs.dart';
+import 'local_notification_service.dart';
+import 'notification_navigation.dart';
+import 'user_roles.dart';
 import '../main.dart';
 import '../screens/bookings/booking_list_screen.dart';
 import '../screens/chat/chat_screen.dart';
 import '../screens/notifications/notifications_screen.dart';
 import '../screens/payments/payment_screen.dart';
+import '../screens/requests/request_list_screen.dart';
+import '../screens/requests/seeker_request_list_screen.dart';
 
 /// Handles FCM token lifecycle and push notification setup.
 class FcmService {
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  static bool _listenersBound = false;
 
   /// Request permission and save the FCM token to Firestore.
   /// Call this after the user signs in.
@@ -44,24 +50,32 @@ class FcmService {
 
       debugPrint('FCM: Permission status = ${settings.authorizationStatus}');
 
+      await LocalNotificationService.initialize(
+        onTapPayload: (payload) => navigateFromPayload(payload),
+      );
+
       // Get and save the token
       await _saveToken();
 
-      // Listen for token refreshes
-      _messaging.onTokenRefresh.listen((newToken) {
-        _saveTokenValue(newToken);
-      });
+      if (!_listenersBound) {
+        // Listen for token refreshes
+        _messaging.onTokenRefresh.listen((newToken) {
+          _saveTokenValue(newToken);
+        });
 
-      // Handle foreground messages
-      FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+        // Handle foreground messages
+        FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
-      // Handle notification tap when app is in background
-      FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
+        // Handle notification tap when app is in background
+        FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
 
-      // Check if app was opened from terminated state via notification
-      final initialMessage = await _messaging.getInitialMessage();
-      if (initialMessage != null) {
-        _handleMessageOpenedApp(initialMessage);
+        // Check if app was opened from terminated state via notification
+        final initialMessage = await _messaging.getInitialMessage();
+        if (initialMessage != null) {
+          _handleMessageOpenedApp(initialMessage);
+        }
+
+        _listenersBound = true;
       }
 
       // Remove stale tokens (non-blocking)
@@ -149,37 +163,59 @@ class FcmService {
   }
 
   /// Handle messages received while the app is in the foreground.
-  static void _handleForegroundMessage(RemoteMessage message) {
+  static Future<void> _handleForegroundMessage(RemoteMessage message) async {
     debugPrint('FCM foreground message: ${message.notification?.title}');
-    // Foreground messages are handled by the in-app Firestore listeners
-    // and TigerFeedback notifications, so no extra SnackBar is needed.
+    await LocalNotificationService.showRemoteMessage(message);
   }
 
   /// Handle when a user taps a notification while app is in background/terminated.
   static void _handleMessageOpenedApp(RemoteMessage message) {
     debugPrint('FCM message opened app: ${message.data}');
-    _navigateFromMessage(message.data);
+    navigateFromPayload(message.data);
   }
 
   /// Navigate to the appropriate screen based on notification payload data.
-  static void _navigateFromMessage(Map<String, dynamic> data) {
-    final nav = MyApp.navigatorKey.currentState;
-    if (nav == null) return;
+  static Future<bool> navigateFromPayload(
+    Map<String, dynamic> data, {
+    NavigatorState? navigator,
+  }) async {
+    final nav = navigator ?? MyApp.navigatorKey.currentState;
+    if (nav == null) return false;
 
-    final type = (data['type'] ?? '').toString();
-    final bookingId = (data['bookingId'] ?? '').toString();
     final chatId = (data['chatId'] ?? '').toString();
+    final bookingId = (data['bookingId'] ?? '').toString();
+    final target = NotificationNavigation.resolveTarget(
+      data,
+      role: await _currentUserRole(),
+    );
 
-    if (chatId.isNotEmpty) {
-      nav.push(MaterialPageRoute(builder: (_) => ChatScreen(chatId: chatId)));
-    } else if (type == 'payment' && bookingId.isNotEmpty) {
-      nav.push(
-        MaterialPageRoute(builder: (_) => PaymentScreen(bookingId: bookingId)),
-      );
-    } else if (bookingId.isNotEmpty) {
-      nav.push(MaterialPageRoute(builder: (_) => const BookingListScreen()));
-    } else {
-      nav.push(MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+    switch (target) {
+      case NotificationNavigationTarget.chat:
+        nav.push(MaterialPageRoute(builder: (_) => ChatScreen(chatId: chatId)));
+        return true;
+      case NotificationNavigationTarget.payment:
+        nav.push(
+          MaterialPageRoute(
+            builder: (_) => PaymentScreen(bookingId: bookingId),
+          ),
+        );
+        return true;
+      case NotificationNavigationTarget.providerRequests:
+        nav.push(MaterialPageRoute(builder: (_) => const RequestListScreen()));
+        return true;
+      case NotificationNavigationTarget.seekerRequests:
+        nav.push(
+          MaterialPageRoute(builder: (_) => const SeekerRequestListScreen()),
+        );
+        return true;
+      case NotificationNavigationTarget.bookingList:
+        nav.push(MaterialPageRoute(builder: (_) => const BookingListScreen()));
+        return true;
+      case NotificationNavigationTarget.notifications:
+        nav.push(
+          MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+        );
+        return false;
     }
   }
 
@@ -218,5 +254,16 @@ class FcmService {
     if (defaultTargetPlatform == TargetPlatform.windows) return 'windows';
     if (defaultTargetPlatform == TargetPlatform.linux) return 'linux';
     return 'unknown';
+  }
+
+  static Future<String> _currentUserRole() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return UserRoles.seeker;
+    try {
+      final doc = await FirestoreRefs.users().doc(user.uid).get();
+      return UserRoles.normalize(doc.data()?['role']);
+    } catch (_) {
+      return UserRoles.seeker;
+    }
   }
 }

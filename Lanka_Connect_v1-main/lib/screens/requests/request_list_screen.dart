@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../ui/mobile/mobile_components.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
@@ -18,6 +19,11 @@ import '../../utils/user_roles.dart';
 /// Accepting a request automatically creates a booking.
 class RequestListScreen extends StatelessWidget {
   const RequestListScreen({super.key});
+
+  String _formatScheduledDate(dynamic value) {
+    if (value is! Timestamp) return '';
+    return DateFormat('EEE, d MMM yyyy').format(value.toDate().toLocal());
+  }
 
   String _shortId(String id, {int length = 8}) {
     final value = id.trim();
@@ -40,6 +46,9 @@ class RequestListScreen extends StatelessWidget {
     required String amountLabel,
   }) async {
     final notes = (requestData['notes'] ?? '').toString().trim();
+    final scheduledDateLabel = _formatScheduledDate(
+      requestData['scheduledDate'],
+    );
     final timeWindow = (requestData['timeWindow'] ?? '').toString().trim();
     final requestedTimeLabel = (requestData['requestedTimeLabel'] ?? '')
         .toString()
@@ -77,6 +86,10 @@ class RequestListScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text('From: $seekerName'),
+                if (scheduledDateLabel.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text('Requested date: $scheduledDateLabel'),
+                ],
                 if (timeWindow.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text('Time window: $timeWindow'),
@@ -314,6 +327,13 @@ class RequestListScreen extends StatelessWidget {
             final amount = (data['amount'] is num)
                 ? (data['amount'] as num).toDouble()
                 : null;
+            final scheduledDateLabel = _formatScheduledDate(
+              data['scheduledDate'],
+            );
+            final timeWindow = (data['timeWindow'] ?? '').toString().trim();
+            final requestedTimeLabel = (data['requestedTimeLabel'] ?? '')
+                .toString()
+                .trim();
             final createdAt = data['createdAt'];
             String timeAgo = '';
             if (createdAt is Timestamp) {
@@ -354,6 +374,9 @@ class RequestListScreen extends StatelessWidget {
                   final subtitleParts = <String>[
                     if (category.isNotEmpty) category,
                     if (location.trim().isNotEmpty) location,
+                    if (scheduledDateLabel.isNotEmpty) scheduledDateLabel,
+                    if (requestedTimeLabel.isNotEmpty) requestedTimeLabel,
+                    if (timeWindow.isNotEmpty) timeWindow,
                     if (amount != null) 'LKR ${amount.toStringAsFixed(0)}',
                     if (timeAgo.isNotEmpty) timeAgo,
                   ];

@@ -3,8 +3,6 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '../../ui/mobile/mobile_components.dart';
-import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/theme/design_tokens.dart';
 import '../../utils/firebase_env.dart';
 import '../../utils/firestore_refs.dart';
@@ -114,7 +112,7 @@ class _AuthScreenState extends State<AuthScreen> {
           errorMessage = 'An account already exists for this email.';
           break;
         case 'invalid-email':
-          errorMessage = 'The email address is not valid.';
+          errorMessage = 'You are not entering a correct email address.';
           break;
         case 'user-not-found':
           errorMessage = 'No user found with this email.';
@@ -346,7 +344,7 @@ class _AuthScreenState extends State<AuthScreen> {
   String _passwordResetError(FirebaseAuthException e) {
     switch (e.code) {
       case 'invalid-email':
-        return 'The email address is not valid.';
+        return 'You are not entering a correct email address.';
       case 'missing-email':
         return 'Email is required.';
       default:
@@ -356,7 +354,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   String _passwordResetCallableError(FirebaseFunctionsException e) {
     if (e.code == 'invalid-argument') {
-      return 'The email address is not valid.';
+      return 'You are not entering a correct email address.';
     }
     return e.message ?? 'Could not send reset email. Try again.';
   }
@@ -393,19 +391,6 @@ class _AuthScreenState extends State<AuthScreen> {
     return 'Seeker';
   }
 
-  IconData _roleIcon(String role) {
-    if (role == UserRoles.provider) return Icons.engineering;
-    if (role == UserRoles.admin) return Icons.admin_panel_settings;
-    return Icons.search;
-  }
-
-  String _portalHeadline() {
-    if (!_isLogin) {
-      return 'Create your Lanka Connect account';
-    }
-    return 'Lanka Connect';
-  }
-
   void _setMode(_AuthMode mode) {
     setState(() {
       _mode = mode;
@@ -421,24 +406,33 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Widget _authModeSwitcher({required bool webLayout}) {
     if (!webLayout) {
-      return Wrap(
+      return Container(
         key: const Key('auth_mode_switcher'),
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          ChoiceChip(
-            label: const Text('Login'),
-            selected: _isLogin,
-            onSelected: _loading ? null : (_) => _setMode(_AuthMode.login),
-            avatar: _isLogin ? const Icon(Icons.check, size: 16) : null,
-          ),
-          ChoiceChip(
-            label: const Text('Sign up'),
-            selected: !_isLogin,
-            onSelected: _loading ? null : (_) => _setMode(_AuthMode.signup),
-            avatar: !_isLogin ? const Icon(Icons.check, size: 16) : null,
-          ),
-        ],
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0F4F7),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: const Color(0xFFD9E2E8)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: _MobileSegmentButton(
+                label: 'Login',
+                selected: _isLogin,
+                onTap: _loading ? null : () => _setMode(_AuthMode.login),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _MobileSegmentButton(
+                label: 'Sign up',
+                selected: !_isLogin,
+                onTap: _loading ? null : () => _setMode(_AuthMode.signup),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
@@ -500,58 +494,117 @@ class _AuthScreenState extends State<AuthScreen> {
       );
     }
 
-    return Wrap(
+    final mobileRoles = <({String label, String role, IconData icon})>[
+      (label: 'Seeker', role: UserRoles.seeker, icon: Icons.person_outline),
+      (
+        label: 'Provider',
+        role: UserRoles.provider,
+        icon: Icons.engineering_outlined,
+      ),
+      if (_isLogin)
+        (
+          label: 'Admin',
+          role: UserRoles.admin,
+          icon: Icons.admin_panel_settings_outlined,
+        ),
+    ];
+
+    return Container(
       key: const Key('portal_selector'),
-      spacing: 10,
-      runSpacing: 10,
-      children: [
-        _PortalChip(
-          label: 'Seeker',
-          icon: _roleIcon(UserRoles.seeker),
-          selected: _portalRole == UserRoles.seeker,
-          onTap: _loading
-              ? null
-              : () {
-                  setState(() {
-                    _portalRole = UserRoles.seeker;
-                    if (!_isLogin) {
-                      _role = UserRoles.seeker;
-                    }
-                  });
-                },
-          compact: compact,
-        ),
-        _PortalChip(
-          label: 'Provider',
-          icon: _roleIcon(UserRoles.provider),
-          selected: _portalRole == UserRoles.provider,
-          onTap: _loading
-              ? null
-              : () {
-                  setState(() {
-                    _portalRole = UserRoles.provider;
-                    if (!_isLogin) {
-                      _role = UserRoles.provider;
-                    }
-                  });
-                },
-          compact: compact,
-        ),
-        if (_isLogin)
-          _PortalChip(
-            label: 'Admin',
-            icon: _roleIcon(UserRoles.admin),
-            selected: _portalRole == UserRoles.admin,
-            onTap: _loading
-                ? null
-                : () {
-                    setState(() {
-                      _portalRole = UserRoles.admin;
-                    });
-                  },
-            compact: compact,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F7F9),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8EE)),
+      ),
+      child: Row(
+        children: [
+          for (var i = 0; i < mobileRoles.length; i++) ...[
+            Expanded(
+              child: _MobileRoleSegment(
+                label: mobileRoles[i].label,
+                icon: mobileRoles[i].icon,
+                selected: _portalRole == mobileRoles[i].role,
+                onTap: _loading
+                    ? null
+                    : () {
+                        setState(() {
+                          _portalRole = mobileRoles[i].role;
+                          if (!_isLogin) {
+                            _role = mobileRoles[i].role;
+                          }
+                        });
+                      },
+              ),
+            ),
+            if (i != mobileRoles.length - 1) const SizedBox(width: 6),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _mobileHeadline() {
+    if (_isLogin) return 'Welcome Back';
+    return 'Create Account';
+  }
+
+  String _mobileSupportText() {
+    if (_isLogin) {
+      return 'Choose your portal and continue with the same Lanka Connect account.';
+    }
+    return 'Create a seeker or provider account to book services or offer your skills.';
+  }
+
+  InputDecoration _mobileInputDecoration({
+    required String hintText,
+    required IconData icon,
+    Widget? suffixIcon,
+  }) {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(18),
+      borderSide: const BorderSide(color: Color(0xFFE0E6EB)),
+    );
+    return InputDecoration(
+      hintText: hintText,
+      hintStyle: const TextStyle(color: Color(0xFF9AA6B2), fontSize: 16),
+      prefixIcon: Icon(icon, color: const Color(0xFF98A2B3)),
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+      border: border,
+      enabledBorder: border,
+      focusedBorder: border.copyWith(
+        borderSide: const BorderSide(color: Color(0xFF0A7B81), width: 1.5),
+      ),
+      errorBorder: border.copyWith(
+        borderSide: const BorderSide(color: Color(0xFFE07A7A)),
+      ),
+      focusedErrorBorder: border.copyWith(
+        borderSide: const BorderSide(color: Color(0xFFD54F4F), width: 1.5),
+      ),
+    );
+  }
+
+  Widget _buildMobileFormShell({required Widget child}) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFDFEFE),
+        borderRadius: BorderRadius.circular(34),
+        border: Border.all(color: const Color(0xFFE5EAEE)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x22041F23),
+            blurRadius: 28,
+            offset: Offset(0, 18),
           ),
-      ],
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+        child: child,
+      ),
     );
   }
 
@@ -884,7 +937,7 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!webLayout) {
       return ElevatedButton.styleFrom(
         padding: const EdgeInsets.symmetric(vertical: 18),
-        backgroundColor: DesignTokens.authMobileSegmentSelected,
+        backgroundColor: const Color(0xFF0A7B81),
         foregroundColor: Colors.white,
         elevation: 0,
         shadowColor: Colors.transparent,
@@ -926,8 +979,8 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!webLayout) {
       return ElevatedButton.styleFrom(
         padding: const EdgeInsets.symmetric(vertical: 18),
-        backgroundColor: DesignTokens.authMobileGuestSurface,
-        foregroundColor: DesignTokens.authMobileGuestText,
+        backgroundColor: const Color(0xFFD8F1F2),
+        foregroundColor: const Color(0xFF0F686D),
         elevation: 0,
         shadowColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
@@ -1310,53 +1363,77 @@ class _AuthScreenState extends State<AuthScreen> {
     }
 
     return Scaffold(
-      backgroundColor: MobileTokens.backgroundDark,
-      body: SizedBox.expand(
-        child: Container(
-          width: double.infinity,
-          height: double.infinity,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: DesignTokens.authGradient,
-            ),
+      backgroundColor: const Color(0xFF062F33),
+      body: Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF148189), Color(0xFF0C5960), Color(0xFF062F33)],
           ),
-          child: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight - 32,
-                    ),
-                    child: Column(
-                      children: [
-                        const MobileGradientHeader(
-                          key: Key('auth_mobile_title'),
-                          title: 'Lanka Connect',
-                          subtitle:
-                              'Welcome back to your local service network',
-                          accentColor: MobileTokens.accent,
-                        ),
-                        const SizedBox(height: 14),
-                        MobileSectionCard(
-                          key: const Key('auth_mobile_panel'),
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 220),
-                            child: KeyedSubtree(
-                              key: ValueKey('mobile|$_mode'),
-                              child: _buildAuthForm(webLayout: false),
+        ),
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight - 52,
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Lanka Connect',
+                        key: const Key('auth_mobile_title'),
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.headlineMedium
+                            ?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                      if (FirebaseEnv.backendLabel().isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.25),
+                            ),
+                          ),
+                          child: Text(
+                            FirebaseEnv.backendLabel(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                         ),
                       ],
-                    ),
+                      const SizedBox(height: 28),
+                      _buildMobileFormShell(
+                        child: AnimatedSwitcher(
+                          key: const Key('auth_mobile_panel'),
+                          duration: const Duration(milliseconds: 220),
+                          child: KeyedSubtree(
+                            key: ValueKey('mobile|$_mode'),
+                            child: _buildAuthForm(webLayout: false),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            },
           ),
         ),
       ),
@@ -1364,12 +1441,6 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _buildMobileAuthForm() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bodyColor = isDark
-        ? const Color(0xFFC9D7E6)
-        : const Color(0xFF4A6072);
-    final headingColor = Theme.of(context).colorScheme.onSurface;
-
     return FocusTraversalGroup(
       policy: OrderedTraversalPolicy(),
       child: Form(
@@ -1381,61 +1452,33 @@ class _AuthScreenState extends State<AuthScreen> {
               order: const NumericFocusOrder(1),
               child: _authModeSwitcher(webLayout: false),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 28),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _portalHeadline(),
+                  _mobileHeadline(),
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: headingColor,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF101828),
                   ),
                 ),
-                if (FirebaseEnv.backendLabel().isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: DesignTokens.brandPrimary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: DesignTokens.brandPrimary.withValues(
-                          alpha: 0.35,
-                        ),
-                      ),
-                    ),
-                    child: Text(
-                      'Environment: ${FirebaseEnv.backendLabel()}',
-                      style: TextStyle(
-                        color: headingColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 8),
                 Text(
-                  _isLogin
-                      ? 'Use the correct portal for your account type and continue where your work already lives.'
-                      : 'Create a seeker or provider account to get started.',
+                  _mobileSupportText(),
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: bodyColor,
+                    color: const Color(0xFF667085),
                     height: 1.45,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 22),
             FocusTraversalOrder(
               order: const NumericFocusOrder(2),
               child: _portalSelector(compact: true),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 22),
             FocusTraversalOrder(
               order: const NumericFocusOrder(3),
               child: TextFormField(
@@ -1447,14 +1490,14 @@ class _AuthScreenState extends State<AuthScreen> {
                   AutofillHints.email,
                 ],
                 onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
+                decoration: _mobileInputDecoration(
+                  hintText: 'Email',
+                  icon: Icons.mail_outline,
                 ),
                 validator: Validators.emailField,
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             FocusTraversalOrder(
               order: const NumericFocusOrder(4),
               child: TextFormField(
@@ -1466,9 +1509,9 @@ class _AuthScreenState extends State<AuthScreen> {
                 enableSuggestions: false,
                 autocorrect: false,
                 onFieldSubmitted: (_) => _submit(),
-                decoration: InputDecoration(
-                  labelText: 'Password',
-                  border: const OutlineInputBorder(),
+                decoration: _mobileInputDecoration(
+                  hintText: 'Password',
+                  icon: Icons.lock_outline,
                   suffixIcon: IconButton(
                     onPressed: () {
                       setState(() {
@@ -1486,7 +1529,7 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
             ),
             if (_isLogin) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 6),
               Align(
                 alignment: Alignment.centerRight,
                 child: FocusTraversalOrder(
@@ -1494,12 +1537,16 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: TextButton(
                     key: const Key('forgot_password_button'),
                     onPressed: _loading ? null : _openForgotPasswordDialog,
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFF0A7B81),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
                     child: const Text('Forgot password?'),
                   ),
                 ),
               ),
             ] else
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
             if (_error != null) ...[
               const SizedBox(height: 12),
               _InlineAuthMessage(
@@ -1520,12 +1567,12 @@ class _AuthScreenState extends State<AuthScreen> {
                   _loading
                       ? 'Please wait...'
                       : _isLogin
-                      ? 'Login to ${_roleLabel(_portalRole)} Portal'
+                      ? 'Sign In'
                       : 'Create ${_roleLabel(_role)} Account',
                 ),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 14),
             FocusTraversalOrder(
               order: const NumericFocusOrder(7),
               child: TextButton(
@@ -1541,44 +1588,16 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Expanded(child: Divider()),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Text(
-                    'OR',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-                const Expanded(child: Divider()),
-              ],
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             FocusTraversalOrder(
               order: const NumericFocusOrder(8),
               child: SizedBox(
                 width: double.infinity,
-                child: ElevatedButton.icon(
+                child: ElevatedButton(
                   onPressed: _loading ? null : _continueAsGuest,
-                  icon: const Icon(Icons.person_outline, size: 20),
-                  label: const Text('Continue as Guest'),
                   style: _guestActionButtonStyle(false),
+                  child: const Text('Continue as Guest'),
                 ),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Browse services without creating an account',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
           ],
@@ -1894,23 +1913,125 @@ class _InlineAuthMessage extends StatelessWidget {
   }
 }
 
-class _PortalChip extends StatefulWidget {
-  const _PortalChip({
+class _MobileSegmentButton extends StatelessWidget {
+  const _MobileSegmentButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFF0A7B81) : Colors.transparent,
+            borderRadius: BorderRadius.circular(999),
+            boxShadow: selected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x220A7B81),
+                      blurRadius: 16,
+                      offset: Offset(0, 8),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: selected ? Colors.white : const Color(0xFF475467),
+              fontSize: 16,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileRoleSegment extends StatelessWidget {
+  const _MobileRoleSegment({
     required this.label,
     required this.icon,
     required this.selected,
     required this.onTap,
-    required this.compact,
   });
 
   final String label;
   final IconData icon;
   final bool selected;
   final VoidCallback? onTap;
-  final bool compact;
 
   @override
-  State<_PortalChip> createState() => _PortalChipState();
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFE3F6F7) : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? const Color(0xFFB7E7EA) : Colors.transparent,
+            ),
+            boxShadow: selected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x110A7B81),
+                      blurRadius: 14,
+                      offset: Offset(0, 6),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: selected
+                    ? const Color(0xFF0A7B81)
+                    : const Color(0xFF667085),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected
+                        ? const Color(0xFF0A7B81)
+                        : const Color(0xFF475467),
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _WebAuthTab extends StatelessWidget {
@@ -2011,86 +2132,6 @@ class _WebRoleSegment extends StatelessWidget {
                   : const Color(0xFF4E6166),
               fontSize: 16,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PortalChipState extends State<_PortalChip> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final borderColor = widget.selected
-        ? (isDark
-              ? const Color(0xFF79B7FF)
-              : DesignTokens.authWebChipSelectedBorder)
-        : (isDark ? const Color(0xFF3B4E66) : DesignTokens.authWebChipBorder);
-    final backgroundColor = widget.selected
-        ? (isDark
-              ? const Color(0xFF2A4E7A)
-              : DesignTokens.authWebChipSelectedFill)
-        : (isDark ? const Color(0xFF1A2635) : DesignTokens.authWebChipFill);
-    final contentColor = widget.selected
-        ? (isDark
-              ? const Color(0xFFEAF4FF)
-              : DesignTokens.authWebChipSelectedLabel)
-        : (isDark ? const Color(0xFFD6E5F5) : DesignTokens.authWebChipLabel);
-
-    return MouseRegion(
-      cursor: widget.onTap == null
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
-      onEnter: (_) => setState(() {
-        _hovered = true;
-      }),
-      onExit: (_) => setState(() {
-        _hovered = false;
-      }),
-      child: InkWell(
-        onTap: widget.onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: EdgeInsets.symmetric(
-            horizontal: widget.compact ? 10 : 14,
-            vertical: widget.compact ? 8 : 10,
-          ),
-          decoration: BoxDecoration(
-            color: _hovered && !widget.selected
-                ? (isDark
-                      ? backgroundColor.withValues(alpha: 0.88)
-                      : DesignTokens.authWebChipHover)
-                : backgroundColor,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: borderColor),
-          ),
-          child: AnimatedScale(
-            duration: const Duration(milliseconds: 180),
-            scale: _hovered && widget.onTap != null ? 1.01 : 1,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  widget.icon,
-                  size: widget.compact ? 16 : 18,
-                  color: contentColor,
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: contentColor,
-                    fontWeight: widget.selected
-                        ? FontWeight.w700
-                        : FontWeight.w500,
-                  ),
-                ),
-              ],
             ),
           ),
         ),
