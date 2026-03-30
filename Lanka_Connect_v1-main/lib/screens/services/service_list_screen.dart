@@ -950,7 +950,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               Expanded(
                 child: DropdownButtonFormField<String>(
                   isExpanded: true,
-                  value: _categoryController.text.trim().isEmpty
+                  initialValue: _categoryController.text.trim().isEmpty
                       ? null
                       : _categoryController.text.trim(),
                   decoration: filterDecoration('Category'),
@@ -975,7 +975,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               Expanded(
                 child: DropdownButtonFormField<String>(
                   isExpanded: true,
-                  value: _districtController.text.trim().isEmpty
+                  initialValue: _districtController.text.trim().isEmpty
                       ? null
                       : _districtController.text.trim(),
                   decoration: filterDecoration('District'),
@@ -1005,7 +1005,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               Expanded(
                 child: DropdownButtonFormField<String>(
                   isExpanded: true,
-                  value: _cityController.text.trim().isEmpty
+                  initialValue: _cityController.text.trim().isEmpty
                       ? null
                       : _cityController.text.trim(),
                   decoration: filterDecoration('City'),
@@ -1100,7 +1100,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<double>(
-                    value: _radiusKm,
+                    initialValue: _radiusKm,
                     decoration: filterDecoration('Radius'),
                     items: _radiusOptions
                         .map(

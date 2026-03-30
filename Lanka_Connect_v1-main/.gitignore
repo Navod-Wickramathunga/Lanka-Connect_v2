@@ -59,6 +59,7 @@ build_log.txt
 .gradle/
 .gradle-user/
 .metadata
+android/local.properties
 
 # Node dependencies
 node_modules/

@@ -847,7 +847,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ? NetworkImage(profileImageUrl)
                       : null,
                   onBackgroundImageError: profileImageUrl.isNotEmpty
-                      ? (_, __) {}
+                      ? (_, _) {}
                       : null,
                   child: profileImageUrl.isEmpty
                       ? Text(

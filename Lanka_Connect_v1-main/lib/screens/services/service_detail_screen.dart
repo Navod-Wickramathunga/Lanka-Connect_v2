@@ -456,7 +456,7 @@ class ServiceDetailScreen extends StatelessWidget {
                       const SizedBox(height: 12),
                       if (isBooking)
                         DropdownButtonFormField<String>(
-                          value: selectedWindow,
+                          initialValue: selectedWindow,
                           decoration: const InputDecoration(
                             labelText: 'Preferred time window',
                           ),
@@ -860,35 +860,6 @@ class ServiceDetailScreen extends StatelessWidget {
               ),
             );
           },
-        );
-      },
-    );
-  }
-
-  Widget _statChip(IconData icon, String label) {
-    return Builder(
-      builder: (context) {
-        final scheme = Theme.of(context).colorScheme;
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 14, color: scheme.onSurfaceVariant),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: scheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
         );
       },
     );

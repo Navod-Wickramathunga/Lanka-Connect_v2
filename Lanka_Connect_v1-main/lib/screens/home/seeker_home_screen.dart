@@ -552,7 +552,7 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                     ? NetworkImage(profileImageUrl)
                     : null,
                 onBackgroundImageError: profileImageUrl.isNotEmpty
-                    ? (_, __) {}
+                    ? (_, _) {}
                     : null,
                 child: profileImageUrl.isEmpty
                     ? Text(
