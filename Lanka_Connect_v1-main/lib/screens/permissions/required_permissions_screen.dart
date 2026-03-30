@@ -77,14 +77,14 @@ class _RequiredPermissionsScreenState extends State<RequiredPermissionsScreen>
     if (!Platform.isAndroid && !Platform.isIOS) return const [];
 
     if (Platform.isIOS) {
-      return const [Permission.locationWhenInUse, Permission.photos];
+      return const [Permission.photos];
     }
 
     final android = await _deviceInfo.androidInfo;
     if (android.version.sdkInt >= 33) {
-      return const [Permission.locationWhenInUse, Permission.photos];
+      return const [Permission.photos];
     }
-    return const [Permission.locationWhenInUse, Permission.storage];
+    return const [Permission.storage];
   }
 
   Future<List<PermissionStatus>> _requestPermissions(
@@ -129,7 +129,7 @@ class _RequiredPermissionsScreenState extends State<RequiredPermissionsScreen>
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Location and media access are required to use this app. Please grant all required permissions to continue.',
+                      'Media access is required for profile and service images. Location is now requested only when you use nearby or current-position features.',
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 18),

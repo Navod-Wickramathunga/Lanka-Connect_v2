@@ -80,6 +80,7 @@ class ReviewService {
       title: 'New review submitted',
       body: 'A review was submitted with rating $rating/5.',
       type: 'review',
+      excludeSender: true,
       data: {
         'bookingId': bookingId,
         'serviceId': serviceId,

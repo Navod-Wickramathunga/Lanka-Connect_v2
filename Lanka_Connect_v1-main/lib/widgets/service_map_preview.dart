@@ -20,6 +20,7 @@ class ServiceMapPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
+      final effectiveHeight = height < 156 ? 156.0 : height;
       return ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Material(
@@ -27,14 +28,14 @@ class ServiceMapPreview extends StatelessWidget {
           child: InkWell(
             onTap: onTap,
             child: SizedBox(
-              height: height,
+              height: effectiveHeight,
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
                           padding: const EdgeInsets.all(10),
@@ -51,6 +52,8 @@ class ServiceMapPreview extends StatelessWidget {
                         Expanded(
                           child: Text(
                             title.isEmpty ? 'Location preview' : title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 16,
@@ -60,10 +63,19 @@ class ServiceMapPreview extends StatelessWidget {
                         ),
                       ],
                     ),
-                    Text(
-                      'Google Maps preview opens in the full map view.\nLat ${point.latitude.toStringAsFixed(4)}, Lng ${point.longitude.toStringAsFixed(4)}',
-                      style: const TextStyle(color: Colors.white70, height: 1.4),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: Text(
+                        'Google Maps preview opens in the full map view.\nLat ${point.latitude.toStringAsFixed(4)}, Lng ${point.longitude.toStringAsFixed(4)}',
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          height: 1.35,
+                        ),
+                      ),
                     ),
+                    const SizedBox(height: 10),
                     Align(
                       alignment: Alignment.centerRight,
                       child: FilledButton.icon(

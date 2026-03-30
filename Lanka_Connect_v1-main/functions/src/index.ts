@@ -7,13 +7,68 @@ import {getAuth} from "firebase-admin/auth";
 import {FieldValue, getFirestore} from "firebase-admin/firestore";
 import {getMessaging} from "firebase-admin/messaging";
 import {createHash} from "node:crypto";
-import twilio from "twilio";
-import sgMail from "@sendgrid/mail";
 
 initializeApp();
 const db = getFirestore();
+const NOTIFICATION_CHANNEL_ID = "lanka_connect_notifications_soft";
+const NOTIFICATION_SOUND = "soft_notification";
+let twilioFactoryPromise: Promise<any> | null = null;
+let sendGridPromise: Promise<any> | null = null;
 
 setGlobalOptions({maxInstances: 10});
+
+/**
+ * Lazily loads the Twilio SDK to keep function module startup fast.
+ * @return {Promise<any>} Twilio factory.
+ */
+async function getTwilioFactory(): Promise<any> {
+  if (twilioFactoryPromise == null) {
+    twilioFactoryPromise = import("twilio").then((mod) => mod.default);
+  }
+  return twilioFactoryPromise;
+}
+
+/**
+ * Lazily loads the SendGrid SDK to keep function module startup fast.
+ * @return {Promise<any>} SendGrid mail client.
+ */
+async function getSendGridMail(): Promise<any> {
+  if (sendGridPromise == null) {
+    sendGridPromise = import("@sendgrid/mail").then((mod) => mod.default);
+  }
+  return sendGridPromise;
+}
+
+/**
+ * Builds a string-only payload for FCM push delivery.
+ * @param {string} notificationId Notification document ID.
+ * @param {string} type Notification type label.
+ * @param {unknown} payload Arbitrary payload data to stringify.
+ * @return {Record<string, string>} FCM-safe key/value payload.
+ */
+function buildPushData(
+  notificationId: string,
+  type: string,
+  payload: unknown
+): Record<string, string> {
+  const data: Record<string, string> = {
+    notificationId,
+    type,
+  };
+
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return data;
+  }
+
+  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+    if (value === null || value === undefined) {
+      continue;
+    }
+    data[key] = typeof value === "string" ? value : JSON.stringify(value);
+  }
+
+  return data;
+}
 
 export const setServicePendingOnCreate = onDocumentCreated("services/{serviceId}", async (event) => {
   const snapshot = event.data;
@@ -117,6 +172,72 @@ export const updateProviderRatingOnReviewCreate = onDocumentCreated("reviews/{re
   });
 });
 
+export const syncBookingCompletionForAdminDashboards = onDocumentUpdated("bookings/{bookingId}", async (event) => {
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  if (!before || !after) {
+    return;
+  }
+
+  const beforeStatus = (before.status ?? "").toString().toLowerCase();
+  const afterStatus = (after.status ?? "").toString().toLowerCase();
+  if (beforeStatus === afterStatus) {
+    return;
+  }
+
+  const providerId = (after.providerId ?? before.providerId ?? "").toString().trim();
+  const seekerId = (after.seekerId ?? before.seekerId ?? "").toString().trim();
+  const amount = toFiniteNumber(after.netAmount ?? after.amount);
+  const serviceId = (after.serviceId ?? before.serviceId ?? "").toString().trim();
+
+  const batch = db.batch();
+
+  if (providerId) {
+    let delta = 0;
+    if (beforeStatus !== "completed" && afterStatus === "completed") {
+      delta = 1;
+    } else if (beforeStatus === "completed" && afterStatus !== "completed") {
+      delta = -1;
+    }
+
+    if (delta !== 0) {
+      batch.set(db.collection("users").doc(providerId), {
+        completedJobs: FieldValue.increment(delta),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, {merge: true});
+    }
+  }
+
+  if (beforeStatus !== "completed" && afterStatus === "completed") {
+    batch.set(db.collection("notifications").doc(), {
+      recipientId: "__admins__",
+      senderId: providerId || "system",
+      title: "Booking completed",
+      body: `Provider completed booking ${event.params.bookingId}.`,
+      type: "booking_completion",
+      data: {
+        bookingId: event.params.bookingId,
+        providerId,
+        seekerId,
+        serviceId,
+        amount,
+        status: afterStatus,
+      },
+      isRead: false,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  }
+
+  await batch.commit();
+
+  logger.info("Synced booking completion lifecycle", {
+    bookingId: event.params.bookingId,
+    beforeStatus,
+    afterStatus,
+    providerId,
+  });
+});
+
 export const seedDemoData = onCall(async (request) => {
   const callerUid = request.auth?.uid;
   if (!callerUid) {
@@ -131,6 +252,7 @@ export const seedDemoData = onCall(async (request) => {
   }
 
   const providerId = "demo_provider";
+  const providerBankAccountId = "demo_provider_bank_primary";
   const approvedServiceOneId = "demo_service_cleaning";
   const approvedServiceTwoId = "demo_service_plumbing";
   const pendingServiceId = "demo_service_tutoring";
@@ -141,6 +263,8 @@ export const seedDemoData = onCall(async (request) => {
   const batch = db.batch();
 
   const providerRef = db.collection("users").doc(providerId);
+  const providerBankRef = db.collection("providerBankAccounts")
+    .doc(providerBankAccountId);
   batch.set(providerRef, {
     role: "provider",
     name: "Demo Provider",
@@ -149,6 +273,16 @@ export const seedDemoData = onCall(async (request) => {
     city: "Maharagama",
     skills: ["Home Cleaning", "Plumbing"],
     bio: "Demo profile for presentation and testing.",
+    updatedAt: FieldValue.serverTimestamp(),
+  }, {merge: true});
+  batch.set(providerBankRef, {
+    providerId,
+    bankName: "Bank of Ceylon",
+    accountName: "Demo Provider",
+    accountNumberMasked: "****5678",
+    branch: "Maharagama",
+    isActive: true,
+    createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   }, {merge: true});
 
@@ -294,13 +428,31 @@ export const sendPushOnNotificationCreate = onDocumentCreated(
         }
 
         if (tokens.length > 0) {
+          const pushData = buildPushData(
+            event.params.notificationId,
+            (data.type ?? "general").toString(),
+            data.data
+          );
           try {
             const response = await getMessaging().sendEachForMulticast({
               tokens,
               notification: {title, body},
-              data: {
-                notificationId: event.params.notificationId,
-                type: (data.type ?? "general").toString(),
+              data: pushData,
+              android: {
+                priority: "high",
+                notification: {
+                  channelId: NOTIFICATION_CHANNEL_ID,
+                  priority: "high",
+                  sound: NOTIFICATION_SOUND,
+                },
+              },
+              apns: {
+                payload: {
+                  aps: {
+                    badge: 1,
+                    sound: "default",
+                  },
+                },
               },
             });
             logger.info("Sent admin push notifications", {
@@ -326,18 +478,21 @@ export const sendPushOnNotificationCreate = onDocumentCreated(
     }
 
     try {
+      const pushData = buildPushData(
+        event.params.notificationId,
+        (data.type ?? "general").toString(),
+        data.data
+      );
       await getMessaging().send({
         token: fcmToken,
         notification: {title, body},
-        data: {
-          notificationId: event.params.notificationId,
-          type: (data.type ?? "general").toString(),
-        },
+        data: pushData,
         android: {
           priority: "high",
           notification: {
-            channelId: "lanka_connect_notifications",
+            channelId: NOTIFICATION_CHANNEL_ID,
             priority: "high",
+            sound: NOTIFICATION_SOUND,
           },
         },
         apns: {
@@ -372,6 +527,27 @@ type PaymentStatus =
   "failed" |
   "pending_verification" |
   "paid";
+type OfferDiscountType = "percentage" | "flat";
+type OfferRecord = {
+  id: string;
+  title: string;
+  isActive: boolean;
+  discountType: OfferDiscountType;
+  discountValue: number;
+  targetServiceId?: string;
+  targetProviderId?: string;
+  targetCategory?: string;
+  minAmount?: number;
+  startsAt?: Date;
+  endsAt?: Date;
+};
+type AppliedOfferResult = {
+  offerId: string;
+  discountAmount: number;
+  grossAmount: number;
+  netAmount: number;
+  meta: Record<string, unknown>;
+};
 
 /**
  * Reads a required environment variable and throws when missing.
@@ -408,6 +584,253 @@ function normalizePhone(value: string): string {
 }
 
 /**
+ * Parses a date-like Firestore/admin value into a valid Date.
+ * @param {unknown} value Raw stored value.
+ * @return {Date|undefined} Parsed date when valid.
+ */
+function parseDateValue(value: unknown): Date | undefined {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "toDate" in value &&
+    typeof value.toDate === "function"
+  ) {
+    const parsed = value.toDate();
+    if (parsed instanceof Date && !Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Converts unknown numeric input into a finite number.
+ * @param {unknown} value Raw value.
+ * @param {number} fallback Value returned when parsing fails.
+ * @return {number} Finite number.
+ */
+function toFiniteNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/**
+ * Maps Firestore offer documents into server-side offer records.
+ * @param {string} id Offer document ID.
+ * @param {Record<string, unknown>} data Firestore payload.
+ * @return {OfferRecord} Parsed offer.
+ */
+function offerFromMap(
+  id: string,
+  data: Record<string, unknown>,
+): OfferRecord {
+  const rawType = (data.discountType ?? "").toString().toLowerCase();
+  return {
+    id,
+    title: (data.title ?? "Offer").toString(),
+    isActive: data.isActive === true,
+    discountType: rawType === "flat" ? "flat" : "percentage",
+    discountValue: toFiniteNumber(data.discountValue),
+    targetServiceId: (data.targetServiceId ?? "").toString().trim() || undefined,
+    targetProviderId:
+      (data.targetProviderId ?? "").toString().trim() || undefined,
+    targetCategory: (data.targetCategory ?? "").toString().trim() || undefined,
+    minAmount:
+      data.minAmount == null ? undefined : toFiniteNumber(data.minAmount),
+    startsAt: parseDateValue(data.startsAt),
+    endsAt: parseDateValue(data.endsAt),
+  };
+}
+
+/**
+ * Derives a payable offer from a legacy promotion tile.
+ * @param {string} id Promotion document ID.
+ * @param {Record<string, unknown>} data Promotion payload.
+ * @return {OfferRecord|undefined} Parsed offer when supported.
+ */
+function offerFromPromotion(
+  id: string,
+  data: Record<string, unknown>,
+): OfferRecord | undefined {
+  const discountLabel = (data.discount ?? "").toString().trim();
+  if (!discountLabel) {
+    return undefined;
+  }
+
+  const percentageMatch = /(\d+(?:\.\d+)?)\s*%/.exec(discountLabel);
+  const normalized = discountLabel.replace(/,/g, "");
+  const amountMatch = /(\d+(?:\.\d+)?)/.exec(normalized);
+  const targetCategory =
+    (data.linkedCategory ?? "").toString().trim() || undefined;
+
+  if (percentageMatch) {
+    const discountValue = toFiniteNumber(percentageMatch[1]);
+    if (discountValue <= 0) {
+      return undefined;
+    }
+    return {
+      id: `promo_${id}`,
+      title: (data.title ?? "Promotion").toString(),
+      isActive: true,
+      discountType: "percentage",
+      discountValue,
+      targetCategory,
+    };
+  }
+
+  const discountValue = toFiniteNumber(amountMatch?.[1]);
+  if (discountValue <= 0) {
+    return undefined;
+  }
+  return {
+    id: `promo_${id}`,
+    title: (data.title ?? "Promotion").toString(),
+    isActive: true,
+    discountType: "flat",
+    discountValue,
+    targetCategory,
+  };
+}
+
+/**
+ * Loads active offers, with a promotion fallback for older demo data.
+ * @return {Promise<OfferRecord[]>} Active payable offers.
+ */
+async function loadActiveOffers(): Promise<OfferRecord[]> {
+  const offersSnap = await db.collection("offers").get();
+  const offers = offersSnap.docs
+    .map((doc) => offerFromMap(doc.id, doc.data()))
+    .filter((offer) => offer.isActive);
+  if (offers.length > 0) {
+    return offers;
+  }
+
+  const promotionsSnap = await db.collection("promotions")
+    .where("active", "==", true)
+    .get();
+  return promotionsSnap.docs
+    .map((doc) => offerFromPromotion(doc.id, doc.data()))
+    .filter((offer): offer is OfferRecord => offer !== undefined);
+}
+
+/**
+ * Checks whether an offer can apply to a booking checkout.
+ * @param {Object} input Eligibility inputs.
+ * @param {OfferRecord} input.offer Candidate offer.
+ * @param {Date} input.now Current server time.
+ * @param {number} input.grossAmount Original booking amount.
+ * @param {string} input.serviceId Service ID.
+ * @param {string} input.providerId Provider ID.
+ * @param {string} input.category Service category.
+ * @return {boolean} True when offer applies.
+ */
+function isOfferEligible(input: {
+  offer: OfferRecord;
+  now: Date;
+  grossAmount: number;
+  serviceId: string;
+  providerId: string;
+  category: string;
+}): boolean {
+  const {offer, now, grossAmount, serviceId, providerId, category} = input;
+  if (offer.startsAt && now < offer.startsAt) return false;
+  if (offer.endsAt && now > offer.endsAt) return false;
+  if (offer.minAmount != null && grossAmount < offer.minAmount) return false;
+  if (offer.targetServiceId && offer.targetServiceId !== serviceId) {
+    return false;
+  }
+  if (offer.targetProviderId && offer.targetProviderId !== providerId) {
+    return false;
+  }
+  if (
+    offer.targetCategory &&
+    offer.targetCategory.trim().toLowerCase() !== category.trim().toLowerCase()
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Calculates the discount amount for a single offer.
+ * @param {OfferRecord} offer Offer to evaluate.
+ * @param {number} grossAmount Original booking amount.
+ * @return {number} Discount amount bounded to the gross amount.
+ */
+function offerDiscountAmount(offer: OfferRecord, grossAmount: number): number {
+  if (offer.discountType === "flat") {
+    return Math.min(Math.max(offer.discountValue, 0), grossAmount);
+  }
+  const percent = Math.min(Math.max(offer.discountValue, 0), 100);
+  return Math.min(Math.max((grossAmount * percent) / 100, 0), grossAmount);
+}
+
+/**
+ * Resolves the best available offer for a booking checkout.
+ * @param {Object} input Resolution inputs.
+ * @param {OfferRecord[]} input.offers Active offers.
+ * @param {number} input.grossAmount Original booking amount.
+ * @param {string} input.serviceId Service ID.
+ * @param {string} input.providerId Provider ID.
+ * @param {string} input.category Service category.
+ * @return {AppliedOfferResult|undefined} Best discount, if any.
+ */
+function resolveBestOffer(input: {
+  offers: OfferRecord[];
+  grossAmount: number;
+  serviceId: string;
+  providerId: string;
+  category: string;
+}): AppliedOfferResult | undefined {
+  const {offers, grossAmount, serviceId, providerId, category} = input;
+  const now = new Date();
+  let bestOffer: OfferRecord | undefined;
+  let bestDiscount = 0;
+
+  for (const offer of offers) {
+    if (!isOfferEligible({
+      offer,
+      now,
+      grossAmount,
+      serviceId,
+      providerId,
+      category,
+    })) {
+      continue;
+    }
+
+    const discountAmount = offerDiscountAmount(offer, grossAmount);
+    if (discountAmount > bestDiscount) {
+      bestDiscount = discountAmount;
+      bestOffer = offer;
+    }
+  }
+
+  if (!bestOffer || bestDiscount <= 0) {
+    return undefined;
+  }
+
+  const netAmount = Math.max(grossAmount - bestDiscount, 0);
+  return {
+    offerId: bestOffer.id,
+    discountAmount: bestDiscount,
+    grossAmount,
+    netAmount,
+    meta: {
+      title: bestOffer.title,
+      discountType: bestOffer.discountType,
+      discountValue: bestOffer.discountValue,
+      targetServiceId: bestOffer.targetServiceId ?? null,
+      targetProviderId: bestOffer.targetProviderId ?? null,
+      targetCategory: bestOffer.targetCategory ?? null,
+    },
+  };
+}
+
+/**
  * Checks if the user profile role is admin.
  * @param {string} uid User ID.
  * @return {Promise<boolean>} Whether user is admin.
@@ -415,6 +838,49 @@ function normalizePhone(value: string): string {
 async function isAdminUid(uid: string): Promise<boolean> {
   const snap = await db.collection("users").doc(uid).get();
   return (snap.data()?.role ?? "").toString().toLowerCase() === "admin";
+}
+
+/**
+ * Loads a saved payment method owned by the caller.
+ * @param {string} uid Current user ID.
+ * @param {string} paymentMethodId Saved method document ID.
+ * @return {Promise<Object>} Saved gateway token and display metadata.
+ */
+async function getSavedPaymentMethod(uid: string, paymentMethodId: string): Promise<{
+  tokenRef: string;
+  brand: string;
+  last4: string;
+}> {
+  const methodSnap = await db.collection("users")
+    .doc(uid)
+    .collection("savedPaymentMethods")
+    .doc(paymentMethodId)
+    .get();
+  if (!methodSnap.exists) {
+    throw new HttpsError("not-found", "Saved payment method not found.");
+  }
+
+  const method = methodSnap.data() ?? {};
+  if ((method.status ?? "").toString() !== "active") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Saved payment method is not active.",
+    );
+  }
+
+  const tokenRef = (method.tokenRef ?? "").toString().trim();
+  if (!tokenRef) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Saved payment method is missing its gateway token.",
+    );
+  }
+
+  return {
+    tokenRef,
+    brand: (method.brand ?? "CARD").toString(),
+    last4: (method.last4 ?? "").toString(),
+  };
 }
 
 /**
@@ -695,6 +1161,7 @@ export const requestPasswordResetEmail = onCall(async (request) => {
 
     const resetUrl =
       `${resetBaseUrl()}/reset-password?oobCode=${encodeURIComponent(oobCode)}`;
+    const sgMail = await getSendGridMail();
     sgMail.setApiKey(envStrict("SENDGRID_API_KEY"));
     await sgMail.send({
       to: email,
@@ -765,7 +1232,8 @@ async function sendPaymentReceipt(input: {
 
   if (phone.length >= 10) {
     try {
-      const twilioClient = twilio(
+      const twilioFactory = await getTwilioFactory();
+      const twilioClient = twilioFactory(
         envStrict("TWILIO_ACCOUNT_SID"),
         envStrict("TWILIO_AUTH_TOKEN"),
       );
@@ -804,6 +1272,7 @@ async function sendPaymentReceipt(input: {
 
   if (email.length > 0) {
     try {
+      const sgMail = await getSendGridMail();
       sgMail.setApiKey(envStrict("SENDGRID_API_KEY"));
       const [mailResponse] = await sgMail.send({
         to: email,
@@ -870,7 +1339,7 @@ async function notifyPaymentParties(input: {
     title: "Payment successful",
     body: `Your payment of LKR ${input.amount.toFixed(2)} for booking ${shortId} was successful.`,
     type: "payment",
-    data: {bookingId: input.bookingId},
+    data: {bookingId: input.bookingId, status: input.status},
     isRead: false,
     createdAt: FieldValue.serverTimestamp(),
   });
@@ -878,10 +1347,12 @@ async function notifyPaymentParties(input: {
   batch.set(providerRef, {
     recipientId: input.providerId,
     senderId: "system",
-    title: "Payment received",
-    body: `Payment of LKR ${input.amount.toFixed(2)} received for booking ${shortId}.`,
+    title: "Seeker payment confirmed",
+    body:
+      `The seeker has paid LKR ${input.amount.toFixed(2)} for booking ${shortId}. ` +
+      "You can now visit and complete the job.",
     type: "payment",
-    data: {bookingId: input.bookingId},
+    data: {bookingId: input.bookingId, status: input.status},
     isRead: false,
     createdAt: FieldValue.serverTimestamp(),
   });
@@ -896,6 +1367,7 @@ async function notifyPaymentParties(input: {
  */
 async function bookingPaymentContext(bookingId: string, uid: string): Promise<{
   bookingRef: FirebaseFirestore.DocumentReference<FirebaseFirestore.DocumentData>;
+  booking: FirebaseFirestore.DocumentData;
   paymentFields: {
     bookingId: string;
     serviceId: string;
@@ -945,6 +1417,7 @@ async function bookingPaymentContext(bookingId: string, uid: string): Promise<{
   const amount = Number(booking.netAmount ?? booking.amount ?? 0);
   return {
     bookingRef,
+    booking,
     paymentFields: {
       bookingId,
       serviceId: (booking.serviceId ?? "").toString(),
@@ -959,7 +1432,103 @@ async function bookingPaymentContext(bookingId: string, uid: string): Promise<{
   };
 }
 
-/** Creates a PayHere checkout attempt and returns redirect URL. */
+/** Applies the best eligible offer to a booking on the server side. */
+export const applyBestOfferToBooking = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Sign in required.");
+  }
+
+  const data = request.data as {bookingId?: string};
+  const bookingId = (data.bookingId ?? "").toString().trim();
+  if (!bookingId) {
+    throw new HttpsError("invalid-argument", "bookingId is required.");
+  }
+
+  const {bookingRef, booking, paymentFields} = await bookingPaymentContext(
+    bookingId,
+    uid,
+  );
+  const serviceId = paymentFields.serviceId;
+  const providerId = paymentFields.providerId;
+  const grossAmount = toFiniteNumber(booking.amount);
+  if (!serviceId || !providerId || grossAmount <= 0) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Booking does not have a valid payable amount.",
+    );
+  }
+
+  const serviceSnap = await db.collection("services").doc(serviceId).get();
+  if (!serviceSnap.exists) {
+    throw new HttpsError("not-found", "Service not found.");
+  }
+  const service = serviceSnap.data() ?? {};
+  const offers = await loadActiveOffers();
+  const applied = resolveBestOffer({
+    offers,
+    grossAmount,
+    serviceId,
+    providerId,
+    category: (service.category ?? "").toString(),
+  });
+  if (!applied) {
+    throw new HttpsError(
+      "failed-precondition",
+      "No active offer is available for this booking.",
+    );
+  }
+
+  await bookingRef.set({
+    appliedOfferId: applied.offerId,
+    discountAmount: applied.discountAmount,
+    grossAmount: applied.grossAmount,
+    netAmount: applied.netAmount,
+    appliedOfferMeta: applied.meta,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, {merge: true});
+
+  return applied;
+});
+
+/** Clears an applied booking offer before a payment attempt starts. */
+export const clearBookingOffer = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Sign in required.");
+  }
+
+  const data = request.data as {bookingId?: string};
+  const bookingId = (data.bookingId ?? "").toString().trim();
+  if (!bookingId) {
+    throw new HttpsError("invalid-argument", "bookingId is required.");
+  }
+
+  const {bookingRef, booking} = await bookingPaymentContext(bookingId, uid);
+  const grossAmount = toFiniteNumber(booking.amount);
+  if (grossAmount <= 0) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Booking does not have a valid payable amount.",
+    );
+  }
+
+  await bookingRef.set({
+    appliedOfferId: FieldValue.delete(),
+    discountAmount: FieldValue.delete(),
+    grossAmount: FieldValue.delete(),
+    netAmount: FieldValue.delete(),
+    appliedOfferMeta: FieldValue.delete(),
+    updatedAt: FieldValue.serverTimestamp(),
+  }, {merge: true});
+
+  return {
+    cleared: true,
+    grossAmount,
+  };
+});
+
+/** Simulates a successful card payment and returns immediate success. */
 export const createPayHereCheckoutSession = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -981,49 +1550,78 @@ export const createPayHereCheckoutSession = onCall(async (request) => {
   const {bookingRef, paymentFields} = await bookingPaymentContext(bookingId, uid);
   const paymentRef = db.collection("payments").doc();
   const paymentMethodId = (data.paymentMethodId ?? "").toString().trim();
+  const savedMethod = paymentMethodId ?
+    await getSavedPaymentMethod(uid, paymentMethodId) :
+    null;
   const methodType: PaymentMethodType = paymentMethodId ?
     "saved_card" :
     (data.methodType ?? "card");
   const attemptId = paymentRef.id;
+  const transactionId = `sim_${attemptId}`;
 
   await paymentRef.set({
     ...paymentFields,
     payerId: uid,
     methodType,
-    status: "pending_gateway" as PaymentStatus,
-    gateway: "payhere",
+    status: "success" as PaymentStatus,
+    gateway: "simulated_card",
     gatewayRefs: {
       attemptId,
-      tokenId: paymentMethodId || null,
+      savedMethodId: paymentMethodId || null,
+      tokenId: savedMethod?.tokenRef ?? null,
+      transactionId,
     },
-    saveCard: data.saveCard === true,
+    saveCard: data.saveCard === true && paymentMethodId === "",
     payerEmail: (data.payerEmail ?? "").toString().trim(),
     payerPhone: normalizePhone((data.payerPhone ?? "").toString().trim()),
+    paymentMethodSummary: savedMethod == null ? null : {
+      brand: savedMethod.brand,
+      last4: savedMethod.last4,
+    },
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
   await bookingRef.set({
-    paymentStatus: "pending_gateway",
+    paymentStatus: "paid",
     paymentAttemptId: attemptId,
     paymentUpdatedAt: FieldValue.serverTimestamp(),
+    paidAt: FieldValue.serverTimestamp(),
+    grossAmount: paymentFields.grossAmount,
+    discountAmount: paymentFields.discountAmount,
+    netAmount: paymentFields.netAmount,
   }, {merge: true});
 
-  const merchantId = envStrict("PAYHERE_MERCHANT_ID");
-  const amountText = paymentFields.netAmount.toFixed(2);
-  const currency = "LKR";
-  const secretHash = md5(envStrict("PAYHERE_MERCHANT_SECRET"));
-  const hash = md5(`${merchantId}${attemptId}${amountText}${currency}${secretHash}`);
-  const baseUrl = envStrict("PAYHERE_CHECKOUT_BASE_URL");
-  const checkoutUrl =
-    `${baseUrl}?merchant_id=${encodeURIComponent(merchantId)}` +
-    `&order_id=${encodeURIComponent(attemptId)}` +
-    `&amount=${encodeURIComponent(amountText)}` +
-    `&currency=${currency}&hash=${hash}`;
+  const receipt = await sendPaymentReceipt({
+    paymentId: attemptId,
+    bookingId,
+    userId: uid,
+    amount: paymentFields.netAmount,
+    status: "success",
+    transactionId,
+  });
+  await paymentRef.update({
+    receipt: {
+      smsSent: receipt.smsSent,
+      emailSent: receipt.emailSent,
+      smsMessageId: receipt.smsMessageId ?? null,
+      emailMessageId: receipt.emailMessageId ?? null,
+      sentAt: FieldValue.serverTimestamp(),
+    },
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  await notifyPaymentParties({
+    bookingId,
+    seekerId: paymentFields.seekerId,
+    providerId: paymentFields.providerId,
+    amount: paymentFields.netAmount,
+    status: "success",
+  });
 
   return {
-    checkoutUrl,
     paymentAttemptId: attemptId,
-    expiresAt: Date.now() + (15 * 60 * 1000),
+    paymentStatus: "success",
+    simulated: true,
   };
 });
 
@@ -1298,22 +1896,29 @@ export const payHereWebhook = onRequest(async (req, res) => {
         payment.gatewayRefs?.tokenId ??
         "").toString().trim();
       if (saveCard && tokenId) {
-        await db.collection("users")
+        const savedMethodsRef = db.collection("users")
           .doc((payment.seekerId ?? "").toString())
-          .collection("savedPaymentMethods")
-          .add({
-            userId: (payment.seekerId ?? "").toString(),
-            gateway: "payhere",
-            tokenRef: tokenId,
-            brand: (payload.card_type ?? "CARD").toString(),
-            last4: (payload.card_no ?? "").toString().slice(-4),
-            expiryMonth: Number(payload.expiry_month ?? 0) || null,
-            expiryYear: Number(payload.expiry_year ?? 0) || null,
-            isDefault: true,
-            status: "active",
-            createdAt: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
-          });
+          .collection("savedPaymentMethods");
+        const existingMethodSnap = await savedMethodsRef
+          .where("tokenRef", "==", tokenId)
+          .limit(1)
+          .get();
+        const targetRef = existingMethodSnap.docs.length > 0 ?
+          existingMethodSnap.docs[0].ref :
+          savedMethodsRef.doc();
+        await targetRef.set({
+          userId: (payment.seekerId ?? "").toString(),
+          gateway: "payhere",
+          tokenRef: tokenId,
+          brand: (payload.card_type ?? "CARD").toString(),
+          last4: (payload.card_no ?? "").toString().slice(-4),
+          expiryMonth: Number(payload.expiry_month ?? 0) || null,
+          expiryYear: Number(payload.expiry_year ?? 0) || null,
+          isDefault: true,
+          status: "active",
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, {merge: true});
       }
 
       const receipt = await sendPaymentReceipt({

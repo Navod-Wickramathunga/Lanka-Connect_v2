@@ -51,14 +51,32 @@ class MobileGradientHeader extends StatelessWidget {
       child: Row(
         children: [
           if (showBackButton) ...[
-            IconButton(
-              onPressed:
-                  onBackPressed ?? () => Navigator.of(context).maybePop(),
-              icon: Icon(
-                Icons.arrow_back,
-                color: Theme.of(context).colorScheme.onPrimary,
-              ),
-              tooltip: 'Back',
+            Builder(
+              builder: (context) {
+                final navigator = Navigator.maybeOf(context);
+                final rootNavigator = Navigator.maybeOf(
+                  context,
+                  rootNavigator: true,
+                );
+                return IconButton(
+                  onPressed:
+                      onBackPressed ??
+                      () async {
+                        if (navigator != null && await navigator.maybePop()) {
+                          return;
+                        }
+                        if (rootNavigator != null &&
+                            rootNavigator != navigator) {
+                          await rootNavigator.maybePop();
+                        }
+                      },
+                  icon: Icon(
+                    Icons.arrow_back,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                  tooltip: 'Back',
+                );
+              },
             ),
             const SizedBox(width: 4),
           ],
@@ -68,6 +86,8 @@ class MobileGradientHeader extends StatelessWidget {
               children: [
                 Text(
                   title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
@@ -78,9 +98,12 @@ class MobileGradientHeader extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     subtitle!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: const Color(0xFFE9F3FF),
                       fontSize: subtitleSize,
+                      height: 1.35,
                     ),
                   ),
                 ],
@@ -143,6 +166,8 @@ class MobilePageIntro extends StatelessWidget {
               children: [
                 Text(
                   title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(
                     context,
                   ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
@@ -150,6 +175,8 @@ class MobilePageIntro extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Theme.of(
                       context,

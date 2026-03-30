@@ -7,6 +7,13 @@ void main() {
       expect(Validators.emailField(''), isNotNull);
     });
 
+    test('rejects malformed email with updated copy', () {
+      expect(
+        Validators.emailField('invalid-email'),
+        'You are not entering a correct email address.',
+      );
+    });
+
     test('accepts valid email', () {
       expect(Validators.emailField('user@example.com'), isNull);
     });

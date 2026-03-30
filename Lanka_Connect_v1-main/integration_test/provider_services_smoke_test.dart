@@ -55,14 +55,24 @@ void main() {
       find.byKey(const Key('service_editor_field_price')),
       '1500',
     );
-    await tester.enterText(
-      find.byKey(const Key('service_editor_field_district')),
-      'Colombo',
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('service_editor_field_district')),
+        matching: find.byType(DropdownButtonFormField<String>),
+      ),
     );
-    await tester.enterText(
-      find.byKey(const Key('service_editor_field_city')),
-      'Nugegoda',
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Colombo').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('service_editor_field_city')),
+        matching: find.byType(DropdownButtonFormField<String>),
+      ),
     );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Nugegoda').last);
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('service_editor_field_description')),
       'Created by smoke test',

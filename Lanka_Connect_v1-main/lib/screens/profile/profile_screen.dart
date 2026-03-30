@@ -14,6 +14,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/app_feedback.dart';
+import '../../utils/sri_lanka_locations.dart';
 import '../../utils/user_roles.dart';
 import '../../utils/validators.dart';
 
@@ -91,6 +92,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'imageUrl': _imageUrl,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      await user.updateDisplayName(_nameController.text.trim());
+      if (_imageUrl.trim().isNotEmpty) {
+        await user.updatePhotoURL(_imageUrl.trim());
+      }
 
       if (mounted) {
         setState(() {
@@ -242,11 +247,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   void _hydrateFields(Map<String, dynamic> data) {
     _role = UserRoles.normalize(data['role']);
-    _imageUrl = (data['imageUrl'] ?? '').toString();
+    final authImage = FirebaseAuth.instance.currentUser?.photoURL ?? '';
+    _imageUrl = (data['imageUrl'] ?? authImage).toString();
     _nameController.text = (data['name'] ?? '').toString();
     _contactController.text = (data['contact'] ?? '').toString();
-    _districtController.text = (data['district'] ?? '').toString();
-    _cityController.text = (data['city'] ?? '').toString();
+    final district = (data['district'] ?? '').toString().trim();
+    _districtController.text = SriLankaLocations.districts.contains(district)
+        ? district
+        : '';
+    final city = (data['city'] ?? '').toString().trim();
+    _cityController.text = _cityOptionsForDistrict(_districtController.text)
+            .contains(city)
+        ? city
+        : '';
     _bioController.text = (data['bio'] ?? '').toString();
 
     final skills = List<String>.from(data['skills'] ?? const []);
@@ -256,6 +269,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final category = (data['primaryCategory'] ?? '').toString().trim();
     _primaryCategory = category.isEmpty ? null : category;
     _skillPickerValue = null;
+  }
+
+  List<String> _cityOptionsForDistrict(String district) {
+    return SriLankaLocations.citiesForDistrict(district);
   }
 
   @override
@@ -278,9 +295,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _initialized = true;
         }
         // Keep profile image in sync with Firestore (e.g. uploaded from another device)
-        final latestImageUrl = (data['imageUrl'] ?? '').toString();
+        final latestImageUrl = (data['imageUrl'] ?? user.photoURL ?? '')
+            .toString();
         if (latestImageUrl.isNotEmpty && latestImageUrl != _imageUrl) {
           _imageUrl = latestImageUrl;
+        }
+        final districtValue = _districtController.text.trim();
+        final cityOptions = _cityOptionsForDistrict(districtValue);
+        if (_cityController.text.trim().isNotEmpty &&
+            !cityOptions.contains(_cityController.text.trim())) {
+          _cityController.text = '';
         }
 
         final content = SingleChildScrollView(
@@ -298,7 +322,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ? NetworkImage(_imageUrl)
                           : null,
                       onBackgroundImageError: _imageUrl.isNotEmpty
-                          ? (_, _) {}
+                          ? (exception, stackTrace) {}
                           : null,
                       child: _imageUrl.isEmpty
                           ? const Icon(Icons.person)
@@ -329,20 +353,60 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         validator: (value) => Validators.phoneField(value),
                       ),
                       const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _districtController,
+                      DropdownButtonFormField<String>(
+                        key: ValueKey<String>(_districtController.text.trim()),
+                        initialValue: _districtController.text.trim().isEmpty
+                            ? null
+                            : _districtController.text.trim(),
                         decoration: const InputDecoration(
                           labelText: 'District',
                         ),
+                        items: SriLankaLocations.districts
+                            .map(
+                              (district) => DropdownMenuItem<String>(
+                                value: district,
+                                child: Text(district),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            _districtController.text = value ?? '';
+                            final nextCities = _cityOptionsForDistrict(
+                              _districtController.text,
+                            );
+                            if (!nextCities.contains(_cityController.text)) {
+                              _cityController.text = '';
+                            }
+                          });
+                        },
                         validator: (value) => Validators.requiredField(
                           value,
                           'District required',
                         ),
                       ),
                       const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _cityController,
+                      DropdownButtonFormField<String>(
+                        key: ValueKey<String>(
+                          '${_districtController.text.trim()}|${_cityController.text.trim()}',
+                        ),
+                        initialValue: _cityController.text.trim().isEmpty
+                            ? null
+                            : _cityController.text.trim(),
                         decoration: const InputDecoration(labelText: 'City'),
+                        items: _cityOptionsForDistrict(_districtController.text)
+                            .map(
+                              (city) => DropdownMenuItem<String>(
+                                value: city,
+                                child: Text(city),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            _cityController.text = value ?? '';
+                          });
+                        },
                         validator: (value) =>
                             Validators.requiredField(value, 'City required'),
                       ),

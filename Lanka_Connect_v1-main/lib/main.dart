@@ -36,11 +36,11 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   debugPrint('FCM background message: ${message.notification?.title}');
 }
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+Future<void>? _bootstrapFuture;
 
-  // Initialize Google Maps with latest renderer on Android for proper tile loading
+Future<void> _bootstrapApplication() async {
   if (!kIsWeb) {
+    // Initialize Google Maps with latest renderer on Android for proper tile loading.
     final mapsImplementation = GoogleMapsFlutterPlatform.instance;
     if (mapsImplementation is GoogleMapsFlutterAndroid) {
       mapsImplementation.useAndroidViewSurface = true;
@@ -67,6 +67,22 @@ void main() async {
     persistenceEnabled: true,
   );
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+}
+
+Future<void> _ensureBootstrapStarted() {
+  return _bootstrapFuture ??= _bootstrapApplication();
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  if (kIsWeb) {
+    _ensureBootstrapStarted();
+    runApp(const MyApp());
+    return;
+  }
+
+  await _ensureBootstrapStarted();
   runApp(const MyApp());
 }
 
@@ -141,7 +157,8 @@ class _AppEntryPointState extends State<_AppEntryPoint> {
         return current;
       }
 
-      final nested = current.queryParameters['link'] ??
+      final nested =
+          current.queryParameters['link'] ??
           current.queryParameters['continueUrl'] ??
           current.queryParameters['deep_link_id'];
       if (nested == null || nested.trim().isEmpty) {
@@ -199,6 +216,7 @@ class StartupFlowGate extends StatefulWidget {
 class _StartupFlowGateState extends State<StartupFlowGate> {
   // Skip splash on web for instant access to the login page.
   bool _showSplash = !kIsWeb;
+  late final Future<void> _bootstrapFuture = _ensureBootstrapStarted();
 
   void _finishSplash() {
     if (!mounted) return;
@@ -209,10 +227,47 @@ class _StartupFlowGateState extends State<StartupFlowGate> {
 
   @override
   Widget build(BuildContext context) {
-    if (_showSplash) {
-      return StartupSplashScreen(onFinished: _finishSplash);
-    }
-    return const RequiredPermissionsScreen(child: AuthGate());
+    return FutureBuilder<void>(
+      future: _bootstrapFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const _BootstrapLoadingScreen();
+        }
+
+        if (_showSplash) {
+          return StartupSplashScreen(onFinished: _finishSplash);
+        }
+        return const RequiredPermissionsScreen(child: AuthGate());
+      },
+    );
+  }
+}
+
+class _BootstrapLoadingScreen extends StatelessWidget {
+  const _BootstrapLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF033B42),
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+            SizedBox(height: 18),
+            Text(
+              'Starting Lanka Connect',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

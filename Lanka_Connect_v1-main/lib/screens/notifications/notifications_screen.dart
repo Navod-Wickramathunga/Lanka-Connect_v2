@@ -6,20 +6,70 @@ import '../../ui/mobile/mobile_components.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
+import '../../utils/fcm_service.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
-import '../../utils/notification_service.dart';
-import '../../utils/user_roles.dart';
+import '../../widgets/notification_panel_widgets.dart';
 
 class NotificationsScreen extends StatelessWidget {
   const NotificationsScreen({super.key});
 
-  Future<void> _markRead(BuildContext context, String id) async {
+  bool _isOwnedBy(String uid, Map<String, dynamic> data) {
+    return (data['recipientId'] ?? '').toString() == uid;
+  }
+
+  Map<String, dynamic> _payloadFor(Map<String, dynamic> data) {
+    final payload = <String, dynamic>{'type': (data['type'] ?? '').toString()};
+    final raw = data['data'];
+    if (raw is Map) {
+      raw.forEach((key, value) {
+        payload[key.toString()] = value;
+      });
+    }
+    return payload;
+  }
+
+  String _timeLabel(Timestamp? value) {
+    if (value == null) return '';
+    final diff = DateTime.now().difference(value.toDate());
+    if (diff.inDays > 0) return '${diff.inDays}d ago';
+    if (diff.inHours > 0) return '${diff.inHours}h ago';
+    if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
+    return 'Just now';
+  }
+
+  Future<void> _markRead(
+    BuildContext context,
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+    String uid,
+  ) async {
+    if (!_isOwnedBy(uid, doc.data())) return;
     try {
-      await FirestoreRefs.notifications().doc(id).update({
+      await doc.reference.update({
         'isRead': true,
         'readAt': FieldValue.serverTimestamp(),
       });
+    } catch (e) {
+      if (e is FirebaseException && e.code == 'permission-denied') {
+        debugPrint('Notification markRead skipped for ${doc.id}: $e');
+        return;
+      }
+      if (!context.mounted) return;
+      FirestoreErrorHandler.showError(
+        context,
+        FirestoreErrorHandler.toUserMessage(e),
+      );
+    }
+  }
+
+  Future<void> _deleteNotification(
+    BuildContext context,
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+    String uid,
+  ) async {
+    if (!_isOwnedBy(uid, doc.data())) return;
+    try {
+      await doc.reference.delete();
     } catch (e) {
       if (!context.mounted) return;
       FirestoreErrorHandler.showError(
@@ -27,6 +77,178 @@ class NotificationsScreen extends StatelessWidget {
         FirestoreErrorHandler.toUserMessage(e),
       );
     }
+  }
+
+  Future<void> _markAllRead(
+    BuildContext context,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String uid,
+  ) async {
+    var deniedCount = 0;
+    try {
+      for (final doc in docs) {
+        if (!_isOwnedBy(uid, doc.data())) continue;
+        if ((doc.data()['isRead'] ?? false) == true) continue;
+        try {
+          await doc.reference.update({
+            'isRead': true,
+            'readAt': FieldValue.serverTimestamp(),
+          });
+        } on FirebaseException catch (e) {
+          if (e.code == 'permission-denied') {
+            deniedCount++;
+            continue;
+          }
+          rethrow;
+        }
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      FirestoreErrorHandler.showError(
+        context,
+        FirestoreErrorHandler.toUserMessage(e),
+      );
+      return;
+    }
+
+    if (deniedCount > 0 && context.mounted) {
+      FirestoreErrorHandler.showError(
+        context,
+        'Some notifications could not be marked as read.',
+      );
+    }
+  }
+
+  Future<void> _clearAllNotifications(
+    BuildContext context,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String uid,
+  ) async {
+    if (docs.isEmpty) return;
+    var deniedCount = 0;
+    try {
+      for (final doc in docs) {
+        if (!_isOwnedBy(uid, doc.data())) continue;
+        try {
+          await doc.reference.delete();
+        } on FirebaseException catch (e) {
+          if (e.code == 'permission-denied') {
+            deniedCount++;
+            continue;
+          }
+          rethrow;
+        }
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      FirestoreErrorHandler.showError(
+        context,
+        FirestoreErrorHandler.toUserMessage(e),
+      );
+      return;
+    }
+
+    if (deniedCount > 0 && context.mounted) {
+      FirestoreErrorHandler.showError(
+        context,
+        'Some notifications could not be removed.',
+      );
+    }
+  }
+
+  Future<void> _showNotificationDetails(
+    BuildContext context,
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+    String uid,
+  ) async {
+    final data = doc.data();
+    await _markRead(context, doc, uid);
+    if (!context.mounted) return;
+
+    final payload = _payloadFor(data);
+    final createdAt = data['createdAt'] as Timestamp?;
+    final rawDetailData = data['data'];
+    final detailData = rawDetailData is Map ? rawDetailData : const {};
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text((data['title'] ?? 'Notification').toString()),
+          content: SizedBox(
+            width: 460,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text((data['body'] ?? '').toString()),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Type: ${(data['type'] ?? 'general').toString()}',
+                    style: Theme.of(dialogContext).textTheme.bodyMedium,
+                  ),
+                  if (createdAt != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Created: ${createdAt.toDate().toLocal()}',
+                      style: Theme.of(dialogContext).textTheme.bodyMedium,
+                    ),
+                  ],
+                  if (detailData.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Related details',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    ...detailData.entries.map(
+                      (entry) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text('${entry.key}: ${entry.value}'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => _deleteNotification(dialogContext, doc, uid),
+              child: const Text('Remove'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                Navigator.of(dialogContext).pop();
+                await FcmService.navigateFromPayload(payload);
+              },
+              child: const Text('Open related page'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _toolbar(
+    BuildContext context,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String uid,
+  ) {
+    final unreadCount = docs
+        .where((doc) => (doc.data()['isRead'] ?? false) != true)
+        .length;
+    return NotificationToolbar(
+      unreadCount: unreadCount,
+      hasNotifications: docs.isNotEmpty,
+      onMarkAllRead: () => _markAllRead(context, docs, uid),
+      onClearAll: () => _clearAllNotifications(context, docs, uid),
+    );
   }
 
   @override
@@ -44,85 +266,77 @@ class NotificationsScreen extends StatelessWidget {
       return const Scaffold(body: Center(child: Text('Not signed in')));
     }
 
-    final body = StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: FirestoreRefs.users().doc(user.uid).snapshots(),
-      builder: (context, userSnapshot) {
-        final role = UserRoles.normalize(userSnapshot.data?.data()?['role']);
-        final includeAdminChannel = role == UserRoles.admin;
-        final recipientIds = includeAdminChannel
-            ? [user.uid, NotificationService.adminChannelRecipientId]
-            : [user.uid];
+    final body = StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirestoreRefs.notifications()
+          .where('recipientId', isEqualTo: user.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirestoreRefs.notifications()
-              .where('recipientId', whereIn: recipientIds)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(FirestoreErrorHandler.toUserMessage(snapshot.error!)),
+          );
+        }
 
-            if (snapshot.hasError) {
-              return Center(
-                child: Text(
-                  FirestoreErrorHandler.toUserMessage(snapshot.error!),
-                ),
-              );
-            }
+        final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs =
+            (snapshot.data?.docs ??
+                    <QueryDocumentSnapshot<Map<String, dynamic>>>[])
+                .where((doc) {
+                  return (doc.data()['recipientId'] ?? '').toString() ==
+                      user.uid;
+                })
+                .toList();
+        docs.sort((a, b) {
+          final aTs = a.data()['createdAt'] as Timestamp?;
+          final bTs = b.data()['createdAt'] as Timestamp?;
+          final aMs = aTs?.millisecondsSinceEpoch ?? 0;
+          final bMs = bTs?.millisecondsSinceEpoch ?? 0;
+          return bMs.compareTo(aMs);
+        });
+        if (docs.isEmpty) {
+          if (kIsWeb) {
+            return const Center(child: Text('No notifications yet.'));
+          }
+          return const MobileEmptyState(
+            title: 'No notifications yet.',
+            icon: Icons.notifications_none,
+            subtitle:
+                'You\u2019ll be notified about bookings,\nmessages, and important updates here.',
+          );
+        }
 
-            final docs = [...(snapshot.data?.docs ?? [])];
-            docs.sort((a, b) {
-              final aTs = a.data()['createdAt'] as Timestamp?;
-              final bTs = b.data()['createdAt'] as Timestamp?;
-              final aMs = aTs?.millisecondsSinceEpoch ?? 0;
-              final bMs = bTs?.millisecondsSinceEpoch ?? 0;
-              return bMs.compareTo(aMs);
-            });
-            if (docs.isEmpty) {
-              if (kIsWeb) {
-                return const Center(child: Text('No notifications yet.'));
-              }
-              return const MobileEmptyState(
-                title: 'No notifications yet.',
-                icon: Icons.notifications_none,
-                subtitle:
-                    'You\u2019ll be notified about bookings,\nmessages, and important updates here.',
-              );
-            }
-
-            return ListView.builder(
-              itemCount: docs.length,
-              itemBuilder: (context, index) {
-                final doc = docs[index];
-                final data = doc.data();
-                final title = (data['title'] ?? 'Notification').toString();
-                final body = (data['body'] ?? '').toString();
-                final isRead = (data['isRead'] ?? false) == true;
-                final scheme = Theme.of(context).colorScheme;
-
-                return ListTile(
-                  leading: Icon(
-                    isRead ? Icons.notifications_none : Icons.notifications,
-                    color: isRead ? scheme.onSurfaceVariant : scheme.primary,
-                  ),
-                  title: Text(title, style: TextStyle(color: scheme.onSurface)),
-                  subtitle: Text(
-                    body,
-                    style: TextStyle(color: scheme.onSurfaceVariant),
-                  ),
-                  trailing: isRead
-                      ? null
-                      : TextButton(
-                          onPressed: () => _markRead(context, doc.id),
-                          child: Text(
-                            'Mark read',
-                            style: TextStyle(color: scheme.primary),
-                          ),
-                        ),
-                );
-              },
-            );
-          },
+        return Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final doc = docs[index];
+                  final data = doc.data();
+                  final title = (data['title'] ?? 'Notification').toString();
+                  final body = (data['body'] ?? '').toString();
+                  final isRead = (data['isRead'] ?? false) == true;
+                  final type = (data['type'] ?? 'general').toString();
+                  final createdAt = data['createdAt'] as Timestamp?;
+                  return NotificationListItem(
+                    title: title,
+                    body: body,
+                    type: type,
+                    timeLabel: createdAt == null ? '' : _timeLabel(createdAt),
+                    isRead: isRead,
+                    onOpen: () => _showNotificationDetails(context, doc, user.uid),
+                    onViewDetails: () =>
+                        _showNotificationDetails(context, doc, user.uid),
+                    onRemove: () => _deleteNotification(context, doc, user.uid),
+                  );
+                },
+              ),
+            ),
+            _toolbar(context, docs, user.uid),
+          ],
         );
       },
     );

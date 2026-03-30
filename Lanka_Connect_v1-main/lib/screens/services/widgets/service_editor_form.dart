@@ -11,6 +11,8 @@ import 'package:mime/mime.dart';
 
 import '../../../utils/firestore_error_handler.dart';
 import '../../../utils/firestore_refs.dart';
+import '../../../utils/service_image_defaults.dart';
+import '../../../utils/sri_lanka_locations.dart';
 import '../../../utils/validators.dart';
 
 class ServiceEditorForm extends StatefulWidget {
@@ -93,8 +95,15 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
     } else {
       _priceController.text = (rawPrice ?? '').toString();
     }
-    _districtController.text = (data['district'] ?? '').toString();
-    _cityController.text = (data['city'] ?? '').toString();
+    final district = (data['district'] ?? '').toString().trim();
+    _districtController.text = SriLankaLocations.districts.contains(district)
+        ? district
+        : '';
+    final city = (data['city'] ?? '').toString().trim();
+    _cityController.text =
+        _cityOptionsForDistrict(_districtController.text).contains(city)
+        ? city
+        : '';
 
     final rawLat = data['lat'];
     if (rawLat is num) {
@@ -115,6 +124,10 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
     if (rawImages is List) {
       _existingImageUrls.addAll(rawImages.map((e) => e.toString()));
     }
+  }
+
+  List<String> _cityOptionsForDistrict(String district) {
+    return SriLankaLocations.citiesForDistrict(district);
   }
 
   Future<void> _pickImages() async {
@@ -194,10 +207,16 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
       final city = _cityController.text.trim();
       final lat = double.tryParse(_latController.text.trim());
       final lng = double.tryParse(_lngController.text.trim());
+      final title = _titleController.text.trim();
+      final category = _selectedCategory ?? '';
+      final defaultImages = defaultServiceImageUrls(
+        category: category,
+        title: title,
+      );
       final payload = <String, dynamic>{
         'providerId': user.uid,
-        'title': _titleController.text.trim(),
-        'category': _selectedCategory ?? '',
+        'title': title,
+        'category': category,
         'price': double.tryParse(_priceController.text.trim()) ?? 0,
         'district': district,
         'city': city,
@@ -211,11 +230,14 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
       if (_isEditMode) {
         final docRef = FirestoreRefs.services().doc(widget.serviceId);
         final uploaded = await _uploadImages(widget.serviceId!);
-        payload['imageUrls'] = [..._existingImageUrls, ...uploaded];
+        final nextImages = [..._existingImageUrls, ...uploaded];
+        payload['imageUrls'] = nextImages.isNotEmpty
+            ? nextImages
+            : defaultImages;
         payload['updatedAt'] = FieldValue.serverTimestamp();
         await docRef.update(payload);
       } else {
-        payload['imageUrls'] = <String>[];
+        payload['imageUrls'] = defaultImages;
         payload['createdAt'] = FieldValue.serverTimestamp();
         final docRef = await FirestoreRefs.services().add(payload);
         if (_selectedImages.isNotEmpty) {
@@ -351,20 +373,64 @@ class _ServiceEditorFormState extends State<ServiceEditorForm> {
                   Validators.priceField(value, 'Price required'),
             ),
             const SizedBox(height: 12),
-            TextFormField(
+            KeyedSubtree(
               key: const Key('service_editor_field_district'),
-              controller: _districtController,
-              decoration: const InputDecoration(labelText: 'District'),
-              validator: (value) =>
-                  Validators.requiredField(value, 'District required'),
+              child: DropdownButtonFormField<String>(
+                key: ValueKey<String>(_districtController.text.trim()),
+                initialValue: _districtController.text.trim().isEmpty
+                    ? null
+                    : _districtController.text.trim(),
+                decoration: const InputDecoration(labelText: 'District'),
+                items: SriLankaLocations.districts
+                    .map(
+                      (district) => DropdownMenuItem<String>(
+                        value: district,
+                        child: Text(district),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _districtController.text = value ?? '';
+                    final cityOptions = _cityOptionsForDistrict(
+                      _districtController.text,
+                    );
+                    if (!cityOptions.contains(_cityController.text.trim())) {
+                      _cityController.text = '';
+                    }
+                  });
+                },
+                validator: (value) =>
+                    Validators.requiredField(value, 'District required'),
+              ),
             ),
             const SizedBox(height: 12),
-            TextFormField(
+            KeyedSubtree(
               key: const Key('service_editor_field_city'),
-              controller: _cityController,
-              decoration: const InputDecoration(labelText: 'City'),
-              validator: (value) =>
-                  Validators.requiredField(value, 'City required'),
+              child: DropdownButtonFormField<String>(
+                key: ValueKey<String>(
+                  '${_districtController.text.trim()}|${_cityController.text.trim()}',
+                ),
+                initialValue: _cityController.text.trim().isEmpty
+                    ? null
+                    : _cityController.text.trim(),
+                decoration: const InputDecoration(labelText: 'City'),
+                items: _cityOptionsForDistrict(_districtController.text)
+                    .map(
+                      (city) => DropdownMenuItem<String>(
+                        value: city,
+                        child: Text(city),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _cityController.text = value ?? '';
+                  });
+                },
+                validator: (value) =>
+                    Validators.requiredField(value, 'City required'),
+              ),
             ),
             const SizedBox(height: 12),
             Row(

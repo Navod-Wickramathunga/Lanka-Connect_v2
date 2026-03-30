@@ -14,8 +14,10 @@ import '../../utils/firestore_refs.dart';
 import '../../utils/notification_service.dart';
 import '../../utils/presence_service.dart';
 import '../../utils/profile_identity.dart';
+import '../../utils/service_image_defaults.dart';
 import '../../utils/user_roles.dart';
 import '../../widgets/service_map_preview.dart';
+import '../../widgets/service_visual.dart';
 import 'service_map_screen.dart';
 
 class ServiceDetailScreen extends StatelessWidget {
@@ -164,23 +166,19 @@ class ServiceDetailScreen extends StatelessWidget {
     );
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> _providerBookingsOnDate(
-    String providerId,
-    String scheduledDateKey,
-  ) {
-    return FirestoreRefs.bookings()
-        .where('providerId', isEqualTo: providerId)
-        .where('scheduledDateKey', isEqualTo: scheduledDateKey)
-        .snapshots();
-  }
+  Future<Map<String, dynamic>> _loadServiceActionData(String serviceId) async {
+    final serviceSnap = await FirestoreRefs.services().doc(serviceId).get();
+    final serviceData = serviceSnap.data();
+    if (serviceData == null) {
+      throw StateError('This service is no longer available.');
+    }
 
-  int _activeBookingCount(
-    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-  ) {
-    return docs.where((doc) {
-      final status = (doc.data()['status'] ?? '').toString().toLowerCase();
-      return status == 'pending' || status == 'accepted';
-    }).length;
+    final providerId = (serviceData['providerId'] ?? '').toString().trim();
+    if (providerId.isEmpty) {
+      throw StateError('This service is missing its provider link.');
+    }
+
+    return serviceData;
   }
 
   Future<void> _createBooking(
@@ -198,13 +196,45 @@ class ServiceDetailScreen extends StatelessWidget {
       FirestoreErrorHandler.showSignInRequired(context);
       return;
     }
+    if (serviceId.trim().isEmpty || providerId.trim().isEmpty) {
+      FirestoreErrorHandler.showError(
+        context,
+        'This service is missing its provider link. Refresh and try again.',
+      );
+      return;
+    }
+    if (providerId == user.uid) {
+      FirestoreErrorHandler.showError(
+        context,
+        'You cannot create a booking for your own service.',
+      );
+      return;
+    }
 
     try {
+      final serviceData = await _loadServiceActionData(serviceId);
+      final resolvedProviderId = (serviceData['providerId'] ?? '')
+          .toString()
+          .trim();
+      final resolvedAmount = serviceData['price'] is num
+          ? (serviceData['price'] as num).toDouble()
+          : amount;
+
+      if (resolvedProviderId == user.uid) {
+        if (context.mounted) {
+          FirestoreErrorHandler.showError(
+            context,
+            'You cannot create a booking for your own service.',
+          );
+        }
+        return;
+      }
+
       final bookingRef = await FirestoreRefs.bookings().add({
         'serviceId': serviceId,
-        'providerId': providerId,
+        'providerId': resolvedProviderId,
         'seekerId': user.uid,
-        'amount': amount,
+        'amount': resolvedAmount,
         'notes': notes,
         'status': 'pending',
         if (scheduledDate != null)
@@ -216,14 +246,15 @@ class ServiceDetailScreen extends StatelessWidget {
       });
 
       await NotificationService.createManySafe(
-        recipientIds: [providerId, user.uid],
+        recipientIds: [resolvedProviderId, user.uid],
         title: 'Booking request created',
         body: 'Booking request for "$serviceTitle" is pending provider action.',
         type: 'booking',
+        excludeSender: true,
         data: {
           'bookingId': bookingRef.id,
           'serviceId': serviceId,
-          'providerId': providerId,
+          'providerId': resolvedProviderId,
           'seekerId': user.uid,
           'status': 'pending',
         },
@@ -234,7 +265,7 @@ class ServiceDetailScreen extends StatelessWidget {
         data: {
           'bookingId': bookingRef.id,
           'serviceId': serviceId,
-          'providerId': providerId,
+          'providerId': resolvedProviderId,
           'seekerId': user.uid,
           'status': 'pending',
         },
@@ -289,6 +320,7 @@ class ServiceDetailScreen extends StatelessWidget {
     String providerId,
     String serviceTitle,
     DateTime? scheduledDate,
+    String timeWindow,
     String? requestedTimeLabel,
     String notes,
   ) async {
@@ -297,11 +329,40 @@ class ServiceDetailScreen extends StatelessWidget {
       FirestoreErrorHandler.showSignInRequired(context);
       return;
     }
+    if (serviceId.trim().isEmpty || providerId.trim().isEmpty) {
+      FirestoreErrorHandler.showError(
+        context,
+        'This service is missing its provider link. Refresh and try again.',
+      );
+      return;
+    }
+    if (providerId == user.uid) {
+      FirestoreErrorHandler.showError(
+        context,
+        'You cannot create a request for your own service.',
+      );
+      return;
+    }
 
     try {
+      final serviceData = await _loadServiceActionData(serviceId);
+      final resolvedProviderId = (serviceData['providerId'] ?? '')
+          .toString()
+          .trim();
+
+      if (resolvedProviderId == user.uid) {
+        if (context.mounted) {
+          FirestoreErrorHandler.showError(
+            context,
+            'You cannot create a request for your own service.',
+          );
+        }
+        return;
+      }
+
       final requestRef = await FirestoreRefs.requests().add({
         'serviceId': serviceId,
-        'providerId': providerId,
+        'providerId': resolvedProviderId,
         'seekerId': user.uid,
         'notes': notes,
         'status': 'pending',
@@ -309,20 +370,22 @@ class ServiceDetailScreen extends StatelessWidget {
           'scheduledDate': Timestamp.fromDate(scheduledDate),
         if (scheduledDate != null)
           'scheduledDateKey': DateFormat('yyyy-MM-dd').format(scheduledDate),
+        if (timeWindow.trim().isNotEmpty) 'timeWindow': timeWindow,
         if ((requestedTimeLabel ?? '').trim().isNotEmpty)
           'requestedTimeLabel': requestedTimeLabel,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
       await NotificationService.createManySafe(
-        recipientIds: [providerId, user.uid],
+        recipientIds: [resolvedProviderId, user.uid],
         title: 'Service request created',
         body: 'A request for "$serviceTitle" is now pending provider action.',
         type: 'request',
+        excludeSender: true,
         data: {
           'requestId': requestRef.id,
           'serviceId': serviceId,
-          'providerId': providerId,
+          'providerId': resolvedProviderId,
           'seekerId': user.uid,
           'status': 'pending',
         },
@@ -333,7 +396,7 @@ class ServiceDetailScreen extends StatelessWidget {
         data: {
           'requestId': requestRef.id,
           'serviceId': serviceId,
-          'providerId': providerId,
+          'providerId': resolvedProviderId,
           'seekerId': user.uid,
           'status': 'pending',
         },
@@ -359,7 +422,7 @@ class ServiceDetailScreen extends StatelessWidget {
       if (context.mounted) {
         FirestoreErrorHandler.showError(
           context,
-          FirestoreErrorHandler.toUserMessage(e),
+          'Failed to create request: ${FirestoreErrorHandler.toUserMessage(e)}',
         );
       }
     } catch (e, st) {
@@ -376,7 +439,7 @@ class ServiceDetailScreen extends StatelessWidget {
       if (context.mounted) {
         FirestoreErrorHandler.showError(
           context,
-          FirestoreErrorHandler.toUserMessage(e),
+          'Failed to create request: $e',
         );
       }
     }
@@ -518,48 +581,23 @@ class ServiceDetailScreen extends StatelessWidget {
                       ),
                       if (selectedDateKey != null) ...[
                         const SizedBox(height: 12),
-                        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                          stream: _providerBookingsOnDate(
-                            providerId,
-                            selectedDateKey,
-                          ),
-                          builder: (context, snapshot) {
+                        Builder(
+                          builder: (context) {
                             final scheme = Theme.of(context).colorScheme;
-                            final hasError = snapshot.hasError;
-                            final busyCount = hasError
-                                ? 0
-                                : _activeBookingCount(snapshot.data?.docs ?? []);
-                            final isAvailable = !hasError && busyCount == 0;
                             final isDark =
                                 Theme.of(context).brightness == Brightness.dark;
-                            final background = hasError
-                                ? scheme.surfaceContainerHighest
-                                : isAvailable
-                                ? (isDark
-                                      ? const Color(0xFF052E2B)
-                                      : const Color(0xFFECFDF5))
-                                : (isDark
-                                      ? const Color(0xFF3F2A08)
-                                      : const Color(0xFFFFF7ED));
-                            final border = hasError
-                                ? scheme.outlineVariant
-                                : isAvailable
-                                ? const Color(0xFF10B981)
-                                : const Color(0xFFF59E0B);
-                            final foreground = hasError
-                                ? scheme.onSurface
-                                : isAvailable
-                                ? (isDark
-                                      ? const Color(0xFFA7F3D0)
-                                      : const Color(0xFF047857))
-                                : (isDark
-                                      ? const Color(0xFFFDE68A)
-                                      : const Color(0xFFB45309));
-                            final message = hasError
-                                ? 'Provider availability could not be loaded. You can still send the booking or request.'
-                                : isAvailable
-                                ? 'Provider looks free on the selected date.'
-                                : 'Provider already has $busyCount active job(s) on this date.';
+                            final background = isDark
+                                ? const Color(0xFF0F2230)
+                                : const Color(0xFFEFF6FF);
+                            final border = isDark
+                                ? const Color(0xFF2E4C66)
+                                : const Color(0xFF93C5FD);
+                            final foreground = isDark
+                                ? const Color(0xFFBFDBFE)
+                                : const Color(0xFF1D4ED8);
+                            final message = isBooking
+                                ? 'Availability is confirmed after you send the booking request. The provider will review the selected date and time window.'
+                                : 'Your requested date and time will be sent to the provider for confirmation.';
 
                             return Container(
                               padding: const EdgeInsets.all(12),
@@ -570,20 +608,13 @@ class ServiceDetailScreen extends StatelessWidget {
                               ),
                               child: Row(
                                 children: [
-                                  Icon(
-                                    hasError
-                                        ? Icons.info_outline
-                                        : isAvailable
-                                        ? Icons.check_circle_outline
-                                        : Icons.schedule,
-                                    color: foreground,
-                                  ),
+                                  Icon(Icons.info_outline, color: foreground),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
                                       message,
                                       style: TextStyle(
-                                        color: foreground,
+                                        color: scheme.onSurface,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
@@ -625,6 +656,7 @@ class ServiceDetailScreen extends StatelessWidget {
                                 providerId,
                                 serviceTitle,
                                 date,
+                                selectedWindow,
                                 requestedTimeLabel,
                                 notes,
                               );
@@ -915,13 +947,7 @@ class ServiceDetailScreen extends StatelessWidget {
             ? '$city, $district'
             : (data['location'] ?? '').toString();
         final point = GeoUtils.extractPoint(data);
-        final rawImages = data['imageUrls'];
-        final imageUrls = rawImages is List
-            ? rawImages
-                  .map((e) => e.toString())
-                  .where((u) => u.isNotEmpty)
-                  .toList()
-            : <String>[];
+        final imageUrls = resolveServiceImageUrls(data: data);
 
         return _servicePage(
           context: context,
@@ -959,8 +985,8 @@ class ServiceDetailScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                const SizedBox(height: 12),
                 if (imageUrls.isNotEmpty) ...[
-                  const SizedBox(height: 12),
                   SizedBox(
                     height: 220,
                     child: PageView.builder(
@@ -971,23 +997,13 @@ class ServiceDetailScreen extends StatelessWidget {
                               _showFullImage(context, imageUrls, index),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: ClipRRect(
+                            child: ServiceVisual(
+                              title: (data['title'] ?? 'Service').toString(),
+                              category: (data['category'] ?? '').toString(),
+                              imageUrl: imageUrls[index],
+                              height: 220,
                               borderRadius: BorderRadius.circular(12),
-                              child: Image.network(
-                                imageUrls[index],
-                                fit: BoxFit.cover,
-                                width: double.infinity,
-                                loadingBuilder: (context, child, progress) {
-                                  if (progress == null) return child;
-                                  return const Center(
-                                    child: CircularProgressIndicator(),
-                                  );
-                                },
-                                errorBuilder: (context, error, stack) =>
-                                    const Center(
-                                      child: Icon(Icons.broken_image, size: 48),
-                                    ),
-                              ),
+                              showOverlay: true,
                             ),
                           ),
                         );
@@ -1003,7 +1019,14 @@ class ServiceDetailScreen extends StatelessWidget {
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
-                ],
+                ] else
+                  ServiceVisual(
+                    title: (data['title'] ?? 'Service').toString(),
+                    category: (data['category'] ?? '').toString(),
+                    height: 220,
+                    borderRadius: BorderRadius.circular(12),
+                    showOverlay: true,
+                  ),
                 if (point != null) ...[
                   const SizedBox(height: 12),
                   ServiceMapPreview(

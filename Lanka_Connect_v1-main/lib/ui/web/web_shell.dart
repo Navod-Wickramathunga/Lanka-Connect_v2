@@ -39,6 +39,10 @@ class WebShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final navigator = Navigator.maybeOf(context);
+    final rootNavigator = Navigator.maybeOf(context, rootNavigator: true);
+    final canShowBack =
+        (navigator?.canPop() ?? false) || (rootNavigator?.canPop() ?? false);
     return Scaffold(
       backgroundColor: isDark ? WebTokens.backgroundDark : WebTokens.background,
       body: SafeArea(
@@ -97,11 +101,38 @@ class WebShell extends StatelessWidget {
                               ),
                               child: Row(
                                 children: [
+                                  if (canShowBack) ...[
+                                    IconButton(
+                                      onPressed: () async {
+                                        if (navigator != null &&
+                                            await navigator.maybePop()) {
+                                          return;
+                                        }
+                                        if (rootNavigator != null &&
+                                            rootNavigator != navigator) {
+                                          await rootNavigator.maybePop();
+                                        }
+                                      },
+                                      tooltip: 'Back',
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: theme
+                                            .colorScheme
+                                            .surfaceContainerHighest,
+                                        foregroundColor:
+                                            theme.colorScheme.primary,
+                                      ),
+                                      icon: const Icon(
+                                        Icons.arrow_back_rounded,
+                                      ),
+                                    ),
+                                    const SizedBox(width: WebTokens.spacingSm),
+                                  ],
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
-                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
                                       children: [
                                         Text(
                                           pageTitle,
@@ -241,36 +272,56 @@ class _SidebarItem extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(WebTokens.radiusMd),
-      child: Container(
-        width: double.infinity,
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? WebTokens.spacingXs : WebTokens.spacingSm,
-          vertical: WebTokens.spacingSm,
-        ),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF134E4A) : Colors.transparent,
-          borderRadius: BorderRadius.circular(WebTokens.radiusMd),
-          border: selected
-              ? Border.all(color: const Color(0xFF5EEAD4))
-              : Border.all(color: Colors.transparent),
-        ),
-        child: compact
-            ? Icon(item.icon, color: Colors.white)
-            : Row(
-                children: [
-                  Icon(item.icon, color: Colors.white),
-                  const SizedBox(width: WebTokens.spacingSm),
-                  Expanded(
-                    child: Text(
-                      item.label,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutBack,
+        scale: selected ? 1.02 : 1,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? WebTokens.spacingXs : WebTokens.spacingSm,
+            vertical: WebTokens.spacingSm,
+          ),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFF134E4A) : Colors.transparent,
+            borderRadius: BorderRadius.circular(WebTokens.radiusMd),
+            border: selected
+                ? Border.all(color: const Color(0xFF5EEAD4))
+                : Border.all(color: Colors.transparent),
+          ),
+          child: compact
+              ? AnimatedRotation(
+                  duration: const Duration(milliseconds: 220),
+                  turns: selected ? 0.015 : 0,
+                  child: Icon(item.icon, color: Colors.white),
+                )
+              : Row(
+                  children: [
+                    AnimatedRotation(
+                      duration: const Duration(milliseconds: 220),
+                      turns: selected ? 0.015 : 0,
+                      child: Icon(item.icon, color: Colors.white),
+                    ),
+                    const SizedBox(width: WebTokens.spacingSm),
+                    Expanded(
+                      child: AnimatedSlide(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        offset: selected ? const Offset(0.03, 0) : Offset.zero,
+                        child: Text(
+                          item.label,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+        ),
       ),
     );
   }

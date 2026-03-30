@@ -14,7 +14,9 @@ import '../../ui/web/web_tokens.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/geo_utils.dart';
 import '../../utils/location_lookup.dart';
+import '../../utils/service_image_defaults.dart';
 import '../../utils/user_roles.dart';
+import '../../widgets/service_visual.dart';
 import '../../widgets/service_map_preview.dart';
 import 'service_detail_screen.dart';
 import 'service_map_screen.dart';
@@ -96,7 +98,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
   };
   static const double _defaultRadiusKm = 10;
   static const double _maxRadiusKm = 100;
-  static const int _pageSize = 20;
+  static const int _pageSize = 100;
 
   int _currentLimit = _pageSize;
 
@@ -536,24 +538,29 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
                 // 1: Category chips
                 if (!widget.showOnlyMine) {
                   if (index == cursor) {
-                    return SizedBox(
-                      height: 48,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        children: _quickCategories.map((category) {
-                          final selected =
-                              _category.toLowerCase() == category.toLowerCase();
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: FilterChip(
-                              selected: selected,
-                              showCheckmark: false,
-                              label: Text(category),
-                              onSelected: (_) => _toggleQuickCategory(category),
-                            ),
-                          );
-                        }).toList(),
+                    return Material(
+                      color: Colors.transparent,
+                      child: SizedBox(
+                        height: 48,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          children: _quickCategories.map((category) {
+                            final selected =
+                                _category.toLowerCase() ==
+                                category.toLowerCase();
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: FilterChip(
+                                selected: selected,
+                                showCheckmark: false,
+                                label: Text(category),
+                                onSelected: (_) =>
+                                    _toggleQuickCategory(category),
+                              ),
+                            );
+                          }).toList(),
+                        ),
                       ),
                     );
                   }
@@ -730,33 +737,15 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
                         children: [
                           Builder(
                             builder: (context) {
-                              final rawImages = data['imageUrls'];
-                              final imageUrls =
-                                  rawImages is List && rawImages.isNotEmpty
-                                  ? rawImages
-                                  : null;
-                              if (imageUrls == null) {
-                                return const SizedBox.shrink();
-                              }
-                              return ClipRRect(
+                              final imageUrl = resolvePrimaryServiceImageUrl(
+                                data: data,
+                              );
+                              return ServiceVisual(
+                                title: (data['title'] ?? 'Service').toString(),
+                                category: (data['category'] ?? '').toString(),
+                                imageUrl: imageUrl,
+                                height: 140,
                                 borderRadius: BorderRadius.circular(8),
-                                child: Image.network(
-                                  imageUrls.first.toString(),
-                                  height: 140,
-                                  width: double.infinity,
-                                  fit: BoxFit.cover,
-                                  loadingBuilder: (context, child, progress) {
-                                    if (progress == null) return child;
-                                    return const SizedBox(
-                                      height: 140,
-                                      child: Center(
-                                        child: CircularProgressIndicator(),
-                                      ),
-                                    );
-                                  },
-                                  errorBuilder: (context, error, stack) =>
-                                      const SizedBox.shrink(),
-                                ),
                               );
                             },
                           ),
@@ -854,7 +843,7 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
                             ServiceMapPreview(
                               point: point,
                               title: (data['title'] ?? 'Service').toString(),
-                              height: 130,
+                              height: kIsWeb ? 156 : 130,
                               onTap: () => Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (_) => ServiceMapScreen(
@@ -1058,11 +1047,20 @@ class _ServiceListScreenState extends State<ServiceListScreen> {
               ),
             ),
           if (_nearMeStatus == _NearMeStatus.serviceDisabled)
-            const Align(
+            Align(
               alignment: Alignment.centerLeft,
-              child: Text(
-                'Location services are disabled. Please enable GPS.',
-                style: TextStyle(fontSize: 12),
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  const Text(
+                    'Location services are disabled. Please enable GPS.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  TextButton(
+                    onPressed: Geolocator.openLocationSettings,
+                    child: const Text('Open Location Settings'),
+                  ),
+                ],
               ),
             ),
           if (_nearMeStatus == _NearMeStatus.denied)

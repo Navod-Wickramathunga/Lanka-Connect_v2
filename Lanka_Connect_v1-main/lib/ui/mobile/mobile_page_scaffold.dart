@@ -26,7 +26,11 @@ class MobilePageScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final shouldShowBack = showBackButton ?? Navigator.of(context).canPop();
+    final navigator = Navigator.maybeOf(context);
+    final rootNavigator = Navigator.maybeOf(context, rootNavigator: true);
+    final canPopCurrent = navigator?.canPop() ?? false;
+    final canPopRoot = rootNavigator?.canPop() ?? false;
+    final shouldShowBack = showBackButton ?? canPopCurrent || canPopRoot;
     final content = SafeArea(
       child: Column(
         children: [

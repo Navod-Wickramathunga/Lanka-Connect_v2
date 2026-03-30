@@ -9,6 +9,8 @@ class WebPageScaffold extends StatelessWidget {
     this.subtitle,
     this.actions = const [],
     this.useScaffold = false,
+    this.showBackButton,
+    this.onBackPressed,
   });
 
   final String title;
@@ -16,11 +18,18 @@ class WebPageScaffold extends StatelessWidget {
   final List<Widget> actions;
   final Widget child;
   final bool useScaffold;
+  final bool? showBackButton;
+  final VoidCallback? onBackPressed;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final navigator = Navigator.maybeOf(context);
+    final rootNavigator = Navigator.maybeOf(context, rootNavigator: true);
+    final shouldShowBack =
+        showBackButton ??
+        (navigator?.canPop() ?? false) || (rootNavigator?.canPop() ?? false);
     final content = Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 1440),
@@ -44,17 +53,49 @@ class WebPageScaffold extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   runSpacing: WebTokens.spacingSm,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(title, style: WebTypography.pageTitle(context)),
-                        if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
-                          const SizedBox(height: WebTokens.spacingXs),
-                          Text(
-                            subtitle!,
-                            style: WebTypography.pageSubtitle(context),
+                        if (shouldShowBack) ...[
+                          IconButton(
+                            onPressed:
+                                onBackPressed ??
+                                () async {
+                                  if (navigator != null &&
+                                      await navigator.maybePop()) {
+                                    return;
+                                  }
+                                  if (rootNavigator != null &&
+                                      rootNavigator != navigator) {
+                                    await rootNavigator.maybePop();
+                                  }
+                                },
+                            tooltip: 'Back',
+                            style: IconButton.styleFrom(
+                              backgroundColor: theme.colorScheme.surface,
+                              foregroundColor: theme.colorScheme.primary,
+                            ),
+                            icon: const Icon(Icons.arrow_back_rounded),
                           ),
+                          const SizedBox(width: WebTokens.spacingSm),
                         ],
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: WebTypography.pageTitle(context),
+                            ),
+                            if (subtitle != null &&
+                                subtitle!.trim().isNotEmpty) ...[
+                              const SizedBox(height: WebTokens.spacingXs),
+                              Text(
+                                subtitle!,
+                                style: WebTypography.pageSubtitle(context),
+                              ),
+                            ],
+                          ],
+                        ),
                       ],
                     ),
                     if (actions.isNotEmpty)
@@ -152,10 +193,7 @@ class WebStatePanel extends StatelessWidget {
                 style: const TextStyle(color: WebTokens.inkSecondary),
               ),
             ],
-            if (action != null) ...[
-              const SizedBox(height: 12),
-              action!,
-            ],
+            if (action != null) ...[const SizedBox(height: 12), action!],
           ],
         ),
       ),

@@ -7,13 +7,13 @@ import '../../ui/mobile/mobile_routes.dart';
 import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/theme/app_theme_controller.dart';
 import '../../ui/theme/design_tokens.dart';
+import '../../utils/auth_session_service.dart';
 import '../../ui/web/web_shell.dart';
 import '../../utils/app_feedback.dart';
 import '../../utils/demo_data_service.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/firebase_env.dart';
-import '../../utils/notification_service.dart';
 import '../../utils/presence_service.dart';
 import '../../utils/profile_identity.dart';
 import '../../utils/user_roles.dart';
@@ -22,6 +22,7 @@ import '../admin/admin_services_screen.dart';
 import '../bookings/booking_list_screen.dart';
 import '../chat/chat_list_screen.dart';
 import '../notifications/notifications_screen.dart';
+import '../payments/payment_history_screen.dart';
 import '../profile/profile_screen.dart';
 import '../provider/provider_dashboard_screen.dart';
 import '../provider/provider_services_screen.dart';
@@ -110,12 +111,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String uid,
     required String role,
   }) {
-    if (role == UserRoles.admin) {
-      return FirestoreRefs.notifications().where(
-        'recipientId',
-        whereIn: [uid, NotificationService.adminChannelRecipientId],
-      );
-    }
     return FirestoreRefs.notifications().where('recipientId', isEqualTo: uid);
   }
 
@@ -190,6 +185,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         icon: Icons.assignment,
       ),
       WebShellNavItem(
+        id: 'payments',
+        label: 'Payments',
+        icon: Icons.receipt_long,
+      ),
+      WebShellNavItem(
         id: 'bookings',
         label: 'Bookings',
         icon: Icons.calendar_today,
@@ -233,6 +233,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       'home': SeekerHomeScreen(),
       'services': ServiceListScreen(),
       'requests': SeekerRequestListScreen(),
+      'payments': PaymentHistoryScreen(),
       'bookings': BookingListScreen(),
       'chat': ChatListScreen(),
       'profile': ProfileScreen(),
@@ -394,11 +395,79 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ElevatedButton(
             onPressed: () async {
               Navigator.of(ctx).pop();
-              await FirebaseAuth.instance.signOut();
+              await AuthSessionService.signOut();
             },
             child: const Text('Create Account'),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _themeToggleAction() {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: AppThemeController.themeMode,
+      builder: (context, mode, _) {
+        final isDark = mode == ThemeMode.dark;
+        final scheme = Theme.of(context).colorScheme;
+        return IconButton(
+          onPressed: AppThemeController.toggleTheme,
+          tooltip: isDark ? 'Switch to light theme' : 'Switch to dark theme',
+          style: IconButton.styleFrom(
+            backgroundColor: isDark
+                ? scheme.surfaceContainerHighest
+                : DesignTokens.brandPrimary.withValues(alpha: 0.12),
+            foregroundColor: isDark
+                ? scheme.onSurface
+                : DesignTokens.brandPrimary,
+            side: BorderSide(
+              color: isDark
+                  ? scheme.outlineVariant
+                  : DesignTokens.brandPrimary.withValues(alpha: 0.25),
+            ),
+          ),
+          icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+        );
+      },
+    );
+  }
+
+  Widget _profileAvatarAction(
+    BuildContext context,
+    User user,
+    Map<String, dynamic> data,
+    String role,
+  ) {
+    final profileImageUrl = ProfileIdentity.profileImageUrlFrom(
+      data,
+      authUser: user,
+    );
+    final displayName = ProfileIdentity.displayNameFrom(data, authUser: user);
+    return InkWell(
+      onTap: () {
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const ProfileScreen()));
+      },
+      borderRadius: BorderRadius.circular(999),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: CircleAvatar(
+          radius: 18,
+          backgroundImage: profileImageUrl.isNotEmpty
+              ? NetworkImage(profileImageUrl)
+              : null,
+          onBackgroundImageError: profileImageUrl.isNotEmpty
+              ? (exception, stackTrace) {}
+              : null,
+          child: profileImageUrl.isEmpty
+              ? Text(
+                  displayName.isNotEmpty
+                      ? displayName[0].toUpperCase()
+                      : _roleLabel(role)[0].toUpperCase(),
+                )
+              : null,
+        ),
       ),
     );
   }
@@ -462,22 +531,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             pageTitle: routeLabel,
             pageSubtitle: subtitleParts.join(' | '),
             actions: [
-              ValueListenableBuilder<ThemeMode>(
-                valueListenable: AppThemeController.themeMode,
-                builder: (context, mode, _) {
-                  return IconButton(
-                    onPressed: AppThemeController.toggleTheme,
-                    tooltip: mode == ThemeMode.dark
-                        ? 'Switch to light theme'
-                        : 'Switch to dark theme',
-                    icon: Icon(
-                      mode == ThemeMode.dark
-                          ? Icons.light_mode
-                          : Icons.dark_mode,
-                    ),
-                  );
-                },
-              ),
+              _themeToggleAction(),
               if (role == UserRoles.admin && !FirebaseEnv.isProduction)
                 IconButton(
                   onPressed: _seeding ? null : _seedDemoData,
@@ -497,8 +551,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   tooltip: 'Create account',
                   icon: const Icon(Icons.person_add_alt_1),
                 ),
+              _profileAvatarAction(context, user, data, role),
               IconButton(
-                onPressed: () => FirebaseAuth.instance.signOut(),
+                onPressed: () => AuthSessionService.signOut(),
                 icon: const Icon(Icons.logout),
                 tooltip: 'Sign out',
               ),
@@ -560,22 +615,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
-              ValueListenableBuilder<ThemeMode>(
-                valueListenable: AppThemeController.themeMode,
-                builder: (context, mode, _) {
-                  return IconButton(
-                    onPressed: AppThemeController.toggleTheme,
-                    tooltip: mode == ThemeMode.dark
-                        ? 'Switch to light theme'
-                        : 'Switch to dark theme',
-                    icon: Icon(
-                      mode == ThemeMode.dark
-                          ? Icons.light_mode
-                          : Icons.dark_mode,
-                    ),
-                  );
-                },
-              ),
+              if (role == UserRoles.admin && !FirebaseEnv.isProduction)
+                IconButton(
+                  onPressed: _seeding ? null : _seedDemoData,
+                  icon: _seeding
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.dataset),
+                  tooltip: 'Seed demo data',
+                ),
+              _themeToggleAction(),
               _notificationAction(user.uid, role),
               if (role == UserRoles.guest)
                 IconButton(
@@ -583,6 +635,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   tooltip: 'Create account',
                   icon: const Icon(Icons.person_add_alt_1),
                 ),
+              _profileAvatarAction(context, user, data, role),
             ],
           ),
           body: AnimatedSwitcher(
@@ -667,11 +720,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _showInfoDialog(String title, String body) {
+    final normalizedTitle = title == 'Release Notes - v1.0'
+        ? 'Release Notes - v1.1.2+4'
+        : title;
+    final normalizedBody = title == 'Release Notes - v1.0'
+        ? '- Refreshed mobile login experience and stronger email validation\n'
+              '- Web and mobile back navigation hardened across shared shells\n'
+              '- Provider request and booking cards now show seeker scheduling details\n'
+              '- Profile images sync across app and web, with district and city filtering for providers\n'
+              '- Notification center now supports remove, clear all, detail view, and related-page routing\n'
+              '- Mobile admin hides banner and promotion sections while web keeps them available\n'
+              '- Nearby services no longer require location permission at startup\n'
+              '- Added a softer notification sound for app alerts and Android push notifications'
+        : body;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
+        title: Text(normalizedTitle),
+        content: Text(normalizedBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
@@ -767,13 +833,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _navIcon(IconData icon, {required bool active, required String role}) {
     final accent = RoleVisuals.forRole(role).accent;
-    if (!active) return Icon(icon, size: 22);
+    if (!active) {
+      return AnimatedScale(
+        duration: const Duration(milliseconds: 200),
+        scale: 1,
+        child: Icon(icon, size: 22),
+      );
+    }
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.7, end: 1.0),
       duration: const Duration(milliseconds: 350),
       curve: Curves.elasticOut,
       builder: (context, scale, child) {
-        return Transform.scale(scale: scale, child: child);
+        return Transform.scale(
+          scale: scale,
+          child: AnimatedRotation(
+            duration: const Duration(milliseconds: 260),
+            turns: active ? 0.02 : 0,
+            child: child,
+          ),
+        );
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
@@ -847,7 +926,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ? NetworkImage(profileImageUrl)
                       : null,
                   onBackgroundImageError: profileImageUrl.isNotEmpty
-                      ? (_, _) {}
+                      ? (exception, stackTrace) {}
                       : null,
                   child: profileImageUrl.isEmpty
                       ? Text(
@@ -884,32 +963,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF0F766E), Color(0xFF1E293B)],
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.pets, color: Colors.white),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Tiger tip: jump to any section from here instead of scrolling through the app.',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
                 ...List.generate(mobileRoutes.length, (index) {
                   final route = mobileRoutes[index];
                   final active = index == selectedIndex;
@@ -939,6 +992,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   );
                 }),
+                if (role == UserRoles.seeker)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      leading: _navIcon(
+                        Icons.receipt_long_outlined,
+                        active: false,
+                        role: role,
+                      ),
+                      title: const Text('Payments'),
+                      trailing: const Icon(Icons.chevron_right),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      tileColor: scheme.surfaceContainerLow,
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const PaymentHistoryScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 SwitchListTile(
                   value: AppThemeController.themeMode.value == ThemeMode.dark,
@@ -967,7 +1045,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 child: ElevatedButton.icon(
                   onPressed: () {
                     Navigator.of(context).pop();
-                    FirebaseAuth.instance.signOut();
+                    AuthSessionService.signOut();
                   },
                   icon: const Icon(Icons.logout, size: 18),
                   label: const Text('Sign Out'),
@@ -1056,7 +1134,7 @@ class _DrawerQuickStats extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Lanka Connect v1.1.1',
+            'Lanka Connect v1.1.2',
             style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
           ),
         ],

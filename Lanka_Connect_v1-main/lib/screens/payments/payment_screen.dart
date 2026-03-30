@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../models/offer.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
@@ -13,6 +12,7 @@ import '../../ui/web/web_page_scaffold.dart';
 import '../../utils/app_feedback.dart';
 import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
+import '../../utils/notification_service.dart';
 import '../../utils/offer_service.dart';
 import '../../utils/validators.dart';
 
@@ -142,38 +142,52 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
-  Future<void> _applyOffer(AppliedOfferResult offer) async {
-    await FirestoreRefs.bookings().doc(widget.bookingId).set({
-      'appliedOfferId': offer.offerId,
-      'discountAmount': offer.discountAmount,
-      'grossAmount': offer.grossAmount,
-      'netAmount': offer.netAmount,
-      'appliedOfferMeta': offer.meta,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    if (!mounted) return;
-    TigerFeedback.show(
-      context,
-      'Tiger applied your best discount.',
-      tone: TigerFeedbackTone.success,
-    );
+  Future<void> _applyOffer() async {
+    setState(() => _saving = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'applyBestOfferToBooking',
+      );
+      await callable.call({'bookingId': widget.bookingId});
+      if (!mounted) return;
+      TigerFeedback.show(
+        context,
+        'Tiger applied your best discount.',
+        tone: TigerFeedbackTone.success,
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      FirestoreErrorHandler.showError(context, e.message ?? e.code);
+    } catch (e) {
+      if (!mounted) return;
+      FirestoreErrorHandler.showError(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _clearOffer() async {
-    await FirestoreRefs.bookings().doc(widget.bookingId).update({
-      'appliedOfferId': FieldValue.delete(),
-      'discountAmount': FieldValue.delete(),
-      'grossAmount': FieldValue.delete(),
-      'netAmount': FieldValue.delete(),
-      'appliedOfferMeta': FieldValue.delete(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    if (!mounted) return;
-    TigerFeedback.show(
-      context,
-      'Tiger removed the discount.',
-      tone: TigerFeedbackTone.info,
-    );
+    setState(() => _saving = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'clearBookingOffer',
+      );
+      await callable.call({'bookingId': widget.bookingId});
+      if (!mounted) return;
+      TigerFeedback.show(
+        context,
+        'Tiger removed the discount.',
+        tone: TigerFeedbackTone.info,
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      FirestoreErrorHandler.showError(context, e.message ?? e.code);
+    } catch (e) {
+      if (!mounted) return;
+      FirestoreErrorHandler.showError(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   bool _isPaymentFinalStatus(String status) =>
@@ -186,12 +200,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   bool _canStartNewPayment(String status) =>
       !_isPaymentFinalStatus(status) && !_isPaymentPendingStatus(status);
-
-  Future<void> _launchCheckout(String checkoutUrl) async {
-    final uri = Uri.tryParse(checkoutUrl);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
 
   Future<void> _startCardCheckout({
     required Map<String, dynamic> booking,
@@ -213,35 +221,44 @@ class _PaymentScreenState extends State<PaymentScreen> {
       return;
     }
 
-    final email = _emailController.text.trim().isNotEmpty
-        ? _emailController.text.trim()
-        : (user.email ?? '').trim();
-    final phoneRaw = _phoneController.text.trim();
-    final phone = Validators.normalizePhoneToE164(phoneRaw);
-
     setState(() => _saving = true);
     try {
-      final callable = FirebaseFunctions.instance.httpsCallable(
-        'createPayHereCheckoutSession',
-      );
-      final response = await callable.call({
-        'bookingId': widget.bookingId,
-        'paymentMethodId': paymentMethodId,
-        'saveCard': _saveCardForFuture && paymentMethodId == null,
-        'payerEmail': email,
-        'payerPhone': phone,
-        'methodType': paymentMethodId == null ? 'card' : 'saved_card',
+      await FirestoreRefs.bookings().doc(widget.bookingId).update({
+        'paymentStatus': 'paid',
+        'paidAt': FieldValue.serverTimestamp(),
       });
-      final data = Map<String, dynamic>.from(response.data as Map);
-      final checkoutUrl = (data['checkoutUrl'] ?? '').toString();
-      if (checkoutUrl.isNotEmpty) {
-        await _launchCheckout(checkoutUrl);
+
+      final providerId = (booking['providerId'] ?? '').toString().trim();
+      if (providerId.isNotEmpty && providerId != user.uid) {
+        final amount = _resolveNetAmount(booking);
+        await NotificationService.createManySafe(
+          recipientIds: [providerId, user.uid],
+          title: 'Seeker payment confirmed',
+          body:
+              'The seeker has paid LKR ${amount.toStringAsFixed(2)} for booking ${_shortId(widget.bookingId)}. You can now visit and complete the job.',
+          type: 'payment',
+          excludeSender: true,
+          data: {
+            'bookingId': widget.bookingId,
+            'status': 'paid',
+          },
+        );
+        await NotificationService.notifyAdminsSafe(
+          title: 'Booking payment confirmed',
+          body: 'A seeker card payment was marked paid for a booking.',
+          data: {
+            'bookingId': widget.bookingId,
+            'providerId': providerId,
+            'seekerId': user.uid,
+            'status': 'paid',
+          },
+        );
       }
 
       if (!mounted) return;
       TigerFeedback.show(
         context,
-        'Tiger opened checkout for you.',
+        'Payment completed successfully.',
         tone: TigerFeedbackTone.success,
       );
     } on FirebaseFunctionsException catch (e) {
@@ -415,17 +432,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     runSpacing: 8,
                     children: [
                       FilledButton.icon(
-                        onPressed: hasAppliedOffer
+                        onPressed: hasAppliedOffer || _saving
                             ? null
-                            : () => _applyOffer(bestOffer),
+                            : _applyOffer,
                         icon: const Icon(Icons.local_offer_outlined),
-                        label: const Text('Apply Discount'),
+                        label: Text(
+                          _saving ? 'Applying...' : 'Apply Discount',
+                        ),
                       ),
                       if (hasAppliedOffer)
                         OutlinedButton.icon(
-                          onPressed: _clearOffer,
+                          onPressed: _saving ? null : _clearOffer,
                           icon: const Icon(Icons.close),
-                          label: const Text('Remove'),
+                          label: Text(_saving ? 'Removing...' : 'Remove'),
                         ),
                     ],
                   ),
@@ -611,7 +630,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
-            final docs = snapshot.data?.docs ?? const [];
+            final docs = (snapshot.data?.docs ?? const []).where((doc) {
+              final tokenRef = (doc.data()['tokenRef'] ?? '').toString().trim();
+              return tokenRef.isNotEmpty;
+            }).toList();
             if (docs.isEmpty) {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -621,7 +643,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       Icon(Icons.credit_card_off_outlined),
                       SizedBox(width: 8),
                       Expanded(
-                        child: Text('No saved cards found for this account.'),
+                        child: Text(
+                          'No usable saved cards found for this account.',
+                        ),
                       ),
                     ],
                   ),

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../ui/theme/design_tokens.dart';
@@ -17,8 +18,103 @@ class AdminWebDashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showMarketingTabs = kIsWeb;
+    final tabs = <Tab>[
+      const Tab(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.analytics_outlined, size: 18),
+            SizedBox(width: 6),
+            Text('Analytics'),
+          ],
+        ),
+      ),
+      const Tab(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.people_outline, size: 18),
+            SizedBox(width: 6),
+            Text('Users'),
+          ],
+        ),
+      ),
+      const Tab(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.shield_outlined, size: 18),
+            SizedBox(width: 6),
+            Text('Moderation'),
+          ],
+        ),
+      ),
+      const Tab(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.star_outline, size: 18),
+            SizedBox(width: 6),
+            Text('Reviews'),
+          ],
+        ),
+      ),
+      const Tab(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.message_outlined, size: 18),
+            SizedBox(width: 6),
+            Text('Messages'),
+          ],
+        ),
+      ),
+      const Tab(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.checklist, size: 18),
+            SizedBox(width: 6),
+            Text('Activity Log'),
+          ],
+        ),
+      ),
+      if (showMarketingTabs)
+        const Tab(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.view_carousel_outlined, size: 18),
+              SizedBox(width: 6),
+              Text('Banners'),
+            ],
+          ),
+        ),
+      if (showMarketingTabs)
+        const Tab(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.local_offer_outlined, size: 18),
+              SizedBox(width: 6),
+              Text('Promotions'),
+            ],
+          ),
+        ),
+    ];
+    final tabViews = <Widget>[
+      const _AnalyticsPanel(),
+      const _UsersPanel(),
+      const AdminServicesScreen(),
+      const _ReviewModerationPanel(),
+      const _MessageModerationPanel(),
+      const _ActivityLogPanel(),
+      if (showMarketingTabs) const AdminBannersPanel(),
+      if (showMarketingTabs) const AdminPromotionsPanel(),
+    ];
     return DefaultTabController(
-      length: 8,
+      length: tabs.length,
       child: Column(
         children: [
           // ── Dashboard header ──
@@ -30,108 +126,14 @@ class AdminWebDashboardScreen extends StatelessWidget {
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const TabBar(
+            child: TabBar(
               isScrollable: true,
               tabAlignment: TabAlignment.start,
               dividerHeight: 0,
-              tabs: [
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.analytics_outlined, size: 18),
-                      SizedBox(width: 6),
-                      Text('Analytics'),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.people_outline, size: 18),
-                      SizedBox(width: 6),
-                      Text('Users'),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.shield_outlined, size: 18),
-                      SizedBox(width: 6),
-                      Text('Moderation'),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.star_outline, size: 18),
-                      SizedBox(width: 6),
-                      Text('Reviews'),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.message_outlined, size: 18),
-                      SizedBox(width: 6),
-                      Text('Messages'),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.checklist, size: 18),
-                      SizedBox(width: 6),
-                      Text('Activity Log'),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.view_carousel_outlined, size: 18),
-                      SizedBox(width: 6),
-                      Text('Banners'),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.local_offer_outlined, size: 18),
-                      SizedBox(width: 6),
-                      Text('Promotions'),
-                    ],
-                  ),
-                ),
-              ],
+              tabs: tabs,
             ),
           ),
-          const Expanded(
-            child: TabBarView(
-              children: [
-                _AnalyticsPanel(),
-                _UsersPanel(),
-                AdminServicesScreen(),
-                _ReviewModerationPanel(),
-                _MessageModerationPanel(),
-                _ActivityLogPanel(),
-                AdminBannersPanel(),
-                AdminPromotionsPanel(),
-              ],
-            ),
-          ),
+          Expanded(child: TabBarView(children: tabViews)),
         ],
       ),
     );

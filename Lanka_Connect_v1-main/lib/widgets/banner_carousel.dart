@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../ui/mobile/mobile_tokens.dart';
+import '../utils/banner_image_defaults.dart';
 import '../utils/firestore_refs.dart';
 
 DateTime? _parseOptionalDate(dynamic value) {
@@ -25,6 +27,7 @@ class BannerData {
     required this.ctaText,
     required this.color,
     this.imageUrl,
+    this.fallbackImageUrl,
     this.scheduledStart,
     this.scheduledEnd,
   });
@@ -33,6 +36,7 @@ class BannerData {
   final String ctaText;
   final Color color;
   final String? imageUrl;
+  final String? fallbackImageUrl;
   final DateTime? scheduledStart;
   final DateTime? scheduledEnd;
 
@@ -63,13 +67,22 @@ class BannerData {
     } catch (_) {
       color = fallbackColor;
     }
+    final title = (data['title'] ?? '').toString();
+    final subtitle = (data['subtitle'] ?? '').toString();
+    final ctaText = (data['ctaText'] ?? 'Learn More').toString();
     final rawUrl = (data['imageUrl'] ?? '').toString().trim();
+    final fallbackImageUrl = defaultBannerImageUrl(
+      title: title,
+      subtitle: subtitle,
+      ctaText: ctaText,
+    );
     return BannerData(
-      title: (data['title'] ?? '').toString(),
-      subtitle: (data['subtitle'] ?? '').toString(),
-      ctaText: (data['ctaText'] ?? 'Learn More').toString(),
+      title: title,
+      subtitle: subtitle,
+      ctaText: ctaText,
       color: color,
       imageUrl: rawUrl.isEmpty ? null : rawUrl,
+      fallbackImageUrl: fallbackImageUrl,
       scheduledStart: _parseOptionalDate(data['scheduledStart']),
       scheduledEnd: _parseOptionalDate(data['scheduledEnd']),
     );
@@ -96,18 +109,30 @@ class _BannerCarouselState extends State<BannerCarousel> {
       subtitle: 'Get 20% off all deep cleaning services this week!',
       ctaText: 'Book Now',
       color: Color(0xFF2563EB),
+      imageUrl:
+          'https://images.pexels.com/photos/6197116/pexels-photo-6197116.jpeg',
+      fallbackImageUrl:
+          'https://images.pexels.com/photos/14675103/pexels-photo-14675103.jpeg',
     ),
     BannerData(
       title: 'Emergency Plumbing?',
       subtitle: 'Expert plumbers available 24/7 in your area.',
       ctaText: 'Find Help',
       color: Color(0xFF0891B2),
+      imageUrl:
+          'https://images.pexels.com/photos/7859953/pexels-photo-7859953.jpeg',
+      fallbackImageUrl:
+          'https://images.pexels.com/photos/7859953/pexels-photo-7859953.jpeg',
     ),
     BannerData(
       title: 'Join as a Pro',
       subtitle: 'Expand your business and reach more customers.',
       ctaText: 'Register',
       color: Color(0xFF0D9488),
+      imageUrl:
+          'https://images.pexels.com/photos/8487997/pexels-photo-8487997.jpeg',
+      fallbackImageUrl:
+          'https://images.pexels.com/photos/13821194/pexels-photo-13821194.jpeg',
     ),
   ];
 
@@ -224,8 +249,6 @@ class _BannerSlide extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasImage = banner.imageUrl != null && banner.imageUrl!.isNotEmpty;
-
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4),
       decoration: BoxDecoration(
@@ -235,16 +258,6 @@ class _BannerSlide extends StatelessWidget {
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
         ),
-        image: hasImage
-            ? DecorationImage(
-                image: NetworkImage(banner.imageUrl!),
-                fit: BoxFit.cover,
-                colorFilter: ColorFilter.mode(
-                  banner.color.withValues(alpha: 0.55),
-                  BlendMode.darken,
-                ),
-              )
-            : null,
         boxShadow: [
           BoxShadow(
             color: banner.color.withValues(alpha: 0.3),
@@ -253,73 +266,131 @@ class _BannerSlide extends StatelessWidget {
           ),
         ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(MobileTokens.radiusXl),
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            _BannerImageLayer(banner: banner),
+            DecoratedBox(
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Text(
-                'FEATURED',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.2,
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    banner.color.withValues(alpha: 0.82),
+                    banner.color.withValues(alpha: 0.56),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              banner.title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.w800,
-                height: 1.2,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              banner.subtitle,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.9),
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const Spacer(),
-            SizedBox(
-              height: 38,
-              child: ElevatedButton.icon(
-                onPressed: onCtaTap,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF0F172A),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text(
+                      'FEATURED',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
                   ),
-                  elevation: 4,
-                  textStyle: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                  const SizedBox(height: 12),
+                  Text(
+                    banner.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800,
+                      height: 1.2,
+                    ),
                   ),
-                ),
-                icon: Text(banner.ctaText),
-                label: const Icon(Icons.arrow_forward, size: 16),
+                  const SizedBox(height: 6),
+                  Text(
+                    banner.subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const Spacer(),
+                  SizedBox(
+                    height: 38,
+                    child: ElevatedButton.icon(
+                      onPressed: onCtaTap,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF0F172A),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 4,
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                      icon: Text(banner.ctaText),
+                      label: const Icon(Icons.arrow_forward, size: 16),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _BannerImageLayer extends StatelessWidget {
+  const _BannerImageLayer({required this.banner});
+
+  final BannerData banner;
+
+  @override
+  Widget build(BuildContext context) {
+    final primaryUrl = banner.imageUrl?.trim() ?? '';
+
+    if (primaryUrl.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: primaryUrl,
+        fit: BoxFit.cover,
+        errorWidget: (context, url, error) => _fallbackImage(),
+      );
+    }
+
+    return _fallbackImage();
+  }
+
+  Widget _fallbackImage() {
+    final fallbackUrl = banner.fallbackImageUrl?.trim() ?? '';
+    if (fallbackUrl.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return CachedNetworkImage(
+      imageUrl: fallbackUrl,
+      fit: BoxFit.cover,
+      errorWidget: (context, url, error) => const SizedBox.shrink(),
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../ui/mobile/mobile_components.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
@@ -13,6 +14,7 @@ import '../../utils/firestore_error_handler.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/notification_service.dart';
 import '../../utils/user_roles.dart';
+import '../payments/payment_history_screen.dart';
 import '../chat/chat_screen.dart';
 import '../payments/payment_screen.dart';
 import '../reviews/review_form_screen.dart';
@@ -51,11 +53,43 @@ class BookingListScreen extends StatelessWidget {
     return value.substring(0, take);
   }
 
+  String _formatScheduledDate(dynamic value) {
+    if (value is! Timestamp) return '';
+    return DateFormat('EEE, d MMM yyyy').format(value.toDate().toLocal());
+  }
+
+  bool _isPaymentFinalStatus(String status) =>
+      status == 'paid' || status == 'success';
+
+  bool _isPaymentPendingStatus(String status) =>
+      status == 'initiated' ||
+      status == 'pending_gateway' ||
+      status == 'pending_verification';
+
+  String _paymentLabel(String status) {
+    switch (status) {
+      case 'paid':
+      case 'success':
+        return 'Paid';
+      case 'pending_gateway':
+        return 'Checkout started';
+      case 'pending_verification':
+        return 'Payment verification pending';
+      case 'initiated':
+        return 'Payment initiated';
+      case 'failed':
+        return 'Payment failed';
+      default:
+        return 'Awaiting payment';
+    }
+  }
+
   Future<void> _confirmCancel(
     BuildContext context,
     String bookingId,
     String seekerId,
     String providerId,
+    String currentPaymentStatus,
   ) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -83,6 +117,7 @@ class BookingListScreen extends StatelessWidget {
         'cancelled',
         seekerId,
         providerId,
+        currentPaymentStatus,
       );
     }
   }
@@ -93,7 +128,16 @@ class BookingListScreen extends StatelessWidget {
     String status,
     String seekerId,
     String providerId,
+    String currentPaymentStatus,
   ) async {
+    if (status == 'completed' && !_isPaymentFinalStatus(currentPaymentStatus)) {
+      FirestoreErrorHandler.showError(
+        context,
+        'The seeker must complete payment before you can mark this booking as completed.',
+      );
+      return;
+    }
+
     try {
       await FirestoreRefs.bookings().doc(bookingId).update({'status': status});
       if (!context.mounted) return;
@@ -102,6 +146,7 @@ class BookingListScreen extends StatelessWidget {
         title: 'Booking status updated',
         body: 'Your booking has been updated to $status.',
         type: 'booking',
+        excludeSender: true,
         data: {'bookingId': bookingId, 'status': status},
       );
       await NotificationService.notifyAdminsSafe(
@@ -230,6 +275,12 @@ class BookingListScreen extends StatelessWidget {
     );
   }
 
+  void _openPaymentHistory(BuildContext context) {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const PaymentHistoryScreen()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -245,21 +296,55 @@ class BookingListScreen extends StatelessWidget {
             : UserRoles.normalize(snapshot.data?.data()?['role']);
         final isSeekerLike =
             role == UserRoles.seeker || role == UserRoles.guest;
+        final historyActions = isSeekerLike
+            ? <Widget>[
+                IconButton(
+                  onPressed: () => _openPaymentHistory(context),
+                  tooltip: 'Payment history',
+                  icon: const Icon(Icons.receipt_long_outlined),
+                ),
+              ]
+            : const <Widget>[];
 
         Query<Map<String, dynamic>> query = FirestoreRefs.bookings();
         if (role == UserRoles.admin) {
-          // Admin sees all bookings (no filter)
+          query = query.orderBy('createdAt', descending: true);
         } else if (role == UserRoles.provider) {
-          query = query.where('providerId', isEqualTo: user.uid);
+          query = query
+              .where('providerId', isEqualTo: user.uid)
+              .orderBy('createdAt', descending: true);
         } else {
-          query = query.where('seekerId', isEqualTo: user.uid);
+          query = query
+              .where('seekerId', isEqualTo: user.uid)
+              .orderBy('createdAt', descending: true);
         }
 
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: query.snapshots(),
           builder: (context, bookingSnapshot) {
             if (bookingSnapshot.connectionState == ConnectionState.waiting) {
-              return const ShimmerCardList(itemCount: 5);
+              final loadingBody = const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: SingleChildScrollView(
+                  child: ShimmerCardList(itemCount: 4),
+                ),
+              );
+              if (!kIsWeb) {
+                return MobilePageScaffold(
+                  title: 'Bookings',
+                  subtitle: 'Track the lifecycle of your bookings',
+                  accentColor: RoleVisuals.forRole(role).accent,
+                  actions: historyActions,
+                  body: loadingBody,
+                );
+              }
+              return WebPageScaffold(
+                title: 'Bookings',
+                subtitle: 'Track the lifecycle of your current bookings.',
+                useScaffold: false,
+                actions: historyActions,
+                child: loadingBody,
+              );
             }
             if (bookingSnapshot.hasError) {
               return Center(
@@ -276,18 +361,20 @@ class BookingListScreen extends StatelessWidget {
                   title: 'Bookings',
                   subtitle: 'Track the lifecycle of your bookings',
                   accentColor: RoleVisuals.forRole(role).accent,
+                  actions: historyActions,
                   body: const MobileEmptyState(
                     title: 'No bookings yet.',
                     icon: Icons.event_busy,
                     subtitle:
-                        'When you book a service or receive a request,\nit will appear here.',
+                        'Direct bookings and accepted requests\nwill appear here.',
                   ),
                 );
               }
-              return const WebPageScaffold(
+              return WebPageScaffold(
                 title: 'Bookings',
                 subtitle: 'Track the lifecycle of your current bookings.',
                 useScaffold: false,
+                actions: historyActions,
                 child: Center(child: Text('No bookings yet.')),
               );
             }
@@ -302,6 +389,19 @@ class BookingListScreen extends StatelessWidget {
                 final amount = (data['amount'] is num)
                     ? (data['amount'] as num).toDouble()
                     : null;
+                final scheduledDateLabel = _formatScheduledDate(
+                  data['scheduledDate'],
+                );
+                final paymentStatus = (data['paymentStatus'] ?? '')
+                    .toString()
+                    .trim();
+                final isPaymentComplete = _isPaymentFinalStatus(paymentStatus);
+                final isPaymentPending = _isPaymentPendingStatus(paymentStatus);
+                final timeWindow = (data['timeWindow'] ?? '').toString().trim();
+                final requestedTimeLabel = (data['requestedTimeLabel'] ?? '')
+                    .toString()
+                    .trim();
+                final notes = (data['notes'] ?? '').toString().trim();
                 final statusColor = _colorForStatus(status);
                 final isTerminalStatus = const [
                   'completed',
@@ -518,12 +618,43 @@ class BookingListScreen extends StatelessWidget {
                             const SizedBox(height: 10),
                             if (location.trim().isNotEmpty)
                               _infoRow(context, Icons.location_on, location),
+                            if (scheduledDateLabel.isNotEmpty)
+                              _infoRow(
+                                context,
+                                Icons.event_outlined,
+                                scheduledDateLabel,
+                              ),
+                            if (requestedTimeLabel.isNotEmpty)
+                              _infoRow(
+                                context,
+                                Icons.schedule_outlined,
+                                requestedTimeLabel,
+                              ),
+                            if (timeWindow.isNotEmpty)
+                              _infoRow(context, Icons.access_time, timeWindow),
                             if (amount != null)
                               _infoRow(
                                 context,
                                 Icons.payments,
                                 'LKR ${amount.toStringAsFixed(0)}',
                               ),
+                            if (status == 'accepted')
+                              _infoRow(
+                                context,
+                                isPaymentComplete
+                                    ? Icons.verified
+                                    : isPaymentPending
+                                    ? Icons.hourglass_bottom
+                                    : Icons.payments_outlined,
+                                'Payment: ${_paymentLabel(paymentStatus)}',
+                              ),
+                            if (notes.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                notes,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
                             const Divider(height: 20),
                             // Action buttons
                             Wrap(
@@ -555,6 +686,7 @@ class BookingListScreen extends StatelessWidget {
                                       'accepted',
                                       (data['seekerId'] ?? '').toString(),
                                       (data['providerId'] ?? '').toString(),
+                                      paymentStatus,
                                     ),
                                   ),
                                 if (role == UserRoles.provider &&
@@ -570,10 +702,12 @@ class BookingListScreen extends StatelessWidget {
                                       'rejected',
                                       (data['seekerId'] ?? '').toString(),
                                       (data['providerId'] ?? '').toString(),
+                                      paymentStatus,
                                     ),
                                   ),
                                 if (role == UserRoles.provider &&
-                                    status == 'accepted')
+                                    status == 'accepted' &&
+                                    isPaymentComplete)
                                   _actionChip(
                                     context: context,
                                     icon: Icons.task_alt,
@@ -585,9 +719,30 @@ class BookingListScreen extends StatelessWidget {
                                       'completed',
                                       (data['seekerId'] ?? '').toString(),
                                       (data['providerId'] ?? '').toString(),
+                                      paymentStatus,
                                     ),
                                   ),
-                                if (isSeekerLike && status == 'accepted')
+                                if (role == UserRoles.provider &&
+                                    status == 'accepted' &&
+                                    !isPaymentComplete)
+                                  _actionChip(
+                                    context: context,
+                                    icon: isPaymentPending
+                                        ? Icons.hourglass_bottom
+                                        : Icons.payments_outlined,
+                                    label: _paymentLabel(paymentStatus),
+                                    color: const Color(0xFFF59E0B),
+                                    onTap: () => FirestoreErrorHandler.showError(
+                                      context,
+                                      isPaymentPending
+                                          ? 'The seeker payment is still being processed.'
+                                          : 'Wait for the seeker to pay before visiting and completing this booking.',
+                                    ),
+                                  ),
+                                if (isSeekerLike &&
+                                    status == 'accepted' &&
+                                    !isPaymentComplete &&
+                                    !isPaymentPending)
                                   _actionChip(
                                     context: context,
                                     icon: Icons.payment,
@@ -613,6 +768,7 @@ class BookingListScreen extends StatelessWidget {
                                       doc.id,
                                       (data['seekerId'] ?? '').toString(),
                                       (data['providerId'] ?? '').toString(),
+                                      paymentStatus,
                                     ),
                                   ),
                               ],
@@ -631,6 +787,7 @@ class BookingListScreen extends StatelessWidget {
                 title: 'Bookings',
                 subtitle: 'Track the lifecycle of your bookings',
                 accentColor: RoleVisuals.forRole(role).accent,
+                actions: historyActions,
                 body: list,
               );
             }
@@ -639,6 +796,7 @@ class BookingListScreen extends StatelessWidget {
               title: 'Bookings',
               subtitle: 'Track the lifecycle of your current bookings.',
               useScaffold: false,
+              actions: historyActions,
               child: list,
             );
           },

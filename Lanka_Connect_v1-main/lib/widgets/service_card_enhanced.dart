@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../ui/theme/design_tokens.dart';
+import 'service_visual.dart';
 
 /// An enhanced service card matching the React ServiceCard component.
 /// Features: hero image, rating stars, review count, price badge, location,
@@ -38,60 +38,11 @@ class ServiceCardEnhanced extends StatefulWidget {
 class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
   bool _hovering = false;
 
-  Color _categoryColor(String category) {
-    switch (category.toLowerCase()) {
-      case 'cleaning':
-        return const Color(0xFF0D9488);
-      case 'plumbing':
-        return const Color(0xFF2563EB);
-      case 'electrical':
-        return const Color(0xFFD97706);
-      case 'carpentry':
-        return const Color(0xFF92400E);
-      case 'painting':
-        return const Color(0xFF7C3AED);
-      case 'gardening':
-        return const Color(0xFF059669);
-      case 'moving':
-        return const Color(0xFFDC2626);
-      case 'beauty':
-        return const Color(0xFFDB2777);
-      case 'tutoring':
-        return const Color(0xFF4F46E5);
-      default:
-        return DesignTokens.brandPrimary;
-    }
-  }
-
-  IconData _categoryIcon(String category) {
-    switch (category.toLowerCase()) {
-      case 'cleaning':
-        return Icons.cleaning_services;
-      case 'plumbing':
-        return Icons.plumbing;
-      case 'electrical':
-        return Icons.electrical_services;
-      case 'carpentry':
-        return Icons.carpenter;
-      case 'painting':
-        return Icons.format_paint;
-      case 'gardening':
-        return Icons.grass;
-      case 'moving':
-        return Icons.local_shipping;
-      case 'beauty':
-        return Icons.spa;
-      case 'tutoring':
-        return Icons.school;
-      default:
-        return Icons.home_repair_service;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final catColor = _categoryColor(widget.category);
+    final visualStyle = serviceVisualStyleForCategory(widget.category);
+    final catColor = visualStyle.primary;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
@@ -117,7 +68,7 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Image section
-                _buildImage(isDark, catColor),
+                _buildImage(),
                 // Content section
                 Padding(
                   padding: const EdgeInsets.all(12),
@@ -125,7 +76,7 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Category chip
-                      _buildCategoryChip(catColor, isDark),
+                      _buildCategoryChip(catColor, visualStyle.icon, isDark),
                       const SizedBox(height: 8),
                       // Title
                       Text(
@@ -160,64 +111,19 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
     );
   }
 
-  Widget _buildImage(bool isDark, Color catColor) {
-    const imageHeight = 160.0;
-    if (widget.imageUrl != null && widget.imageUrl!.isNotEmpty) {
-      return Stack(
-        children: [
-          CachedNetworkImage(
-            imageUrl: widget.imageUrl!,
-            height: imageHeight,
-            width: double.infinity,
-            fit: BoxFit.cover,
-            placeholder: (context, url) => Container(
-              height: imageHeight,
-              color: isDark ? Colors.grey[800] : Colors.grey[200],
-              child: const Center(
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-            errorWidget: (context, url, error) =>
-                _placeholderImage(catColor, isDark),
-          ),
-          // Status badge overlay
-          if (widget.status != null)
-            Positioned(top: 8, right: 8, child: _statusBadge(widget.status!)),
-        ],
-      );
-    }
+  Widget _buildImage() {
     return Stack(
       children: [
-        _placeholderImage(catColor, isDark),
+        ServiceVisual(
+          title: widget.title,
+          category: widget.category,
+          imageUrl: widget.imageUrl,
+          height: 160,
+          borderRadius: BorderRadius.zero,
+        ),
         if (widget.status != null)
           Positioned(top: 8, right: 8, child: _statusBadge(widget.status!)),
       ],
-    );
-  }
-
-  Widget _placeholderImage(Color catColor, bool isDark) {
-    return Container(
-      height: 160,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: isDark
-              ? [catColor.withValues(alpha: 0.3), Colors.grey[900]!]
-              : [
-                  catColor.withValues(alpha: 0.15),
-                  catColor.withValues(alpha: 0.05),
-                ],
-        ),
-      ),
-      child: Center(
-        child: Icon(
-          _categoryIcon(widget.category),
-          size: 48,
-          color: catColor.withValues(alpha: 0.5),
-        ),
-      ),
     );
   }
 
@@ -253,7 +159,11 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
     );
   }
 
-  Widget _buildCategoryChip(Color catColor, bool isDark) {
+  Widget _buildCategoryChip(
+    Color catColor,
+    IconData categoryIcon,
+    bool isDark,
+  ) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -265,7 +175,7 @@ class _ServiceCardEnhancedState extends State<ServiceCardEnhanced> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(_categoryIcon(widget.category), size: 14, color: catColor),
+          Icon(categoryIcon, size: 14, color: catColor),
           const SizedBox(width: 4),
           Text(
             widget.category,

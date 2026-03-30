@@ -9,6 +9,7 @@ import '../../utils/display_name_utils.dart';
 import '../../utils/firestore_refs.dart';
 import '../../utils/geo_utils.dart';
 import '../../utils/profile_identity.dart';
+import '../../utils/service_image_defaults.dart';
 import '../../utils/app_feedback.dart';
 import '../../widgets/banner_carousel.dart';
 import '../../widgets/category_bar.dart';
@@ -81,7 +82,7 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
   Query<Map<String, dynamic>> _buildServiceQuery() {
     Query<Map<String, dynamic>> query = FirestoreRefs.services()
         .where('status', whereIn: const ['approved', 'active'])
-        .limit(20);
+        .limit(100);
     return query;
   }
 
@@ -351,6 +352,18 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                 }).toList();
               }
 
+              docs.sort((a, b) {
+                final aTs = a.data()['createdAt'];
+                final bTs = b.data()['createdAt'];
+                final aMillis = aTs is Timestamp
+                    ? aTs.millisecondsSinceEpoch
+                    : 0;
+                final bMillis = bTs is Timestamp
+                    ? bTs.millisecondsSinceEpoch
+                    : 0;
+                return bMillis.compareTo(aMillis);
+              });
+
               if (docs.isEmpty) {
                 return SliverToBoxAdapter(
                   child: Container(
@@ -397,16 +410,13 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                 sliver: SliverGrid(
                   gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                     maxCrossAxisExtent: 300,
-                    childAspectRatio: 0.58,
+                    childAspectRatio: 0.52,
                     mainAxisSpacing: 8,
                     crossAxisSpacing: 8,
                   ),
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final data = docs[index].data();
-                    final rawImages = data['imageUrls'];
-                    final imageUrl = (rawImages is List && rawImages.isNotEmpty)
-                        ? rawImages.first.toString()
-                        : null;
+                    final imageUrl = resolvePrimaryServiceImageUrl(data: data);
                     final price = (data['price'] is num)
                         ? (data['price'] as num).toDouble()
                         : 0.0;
@@ -552,7 +562,7 @@ class _SeekerHomeScreenState extends State<SeekerHomeScreen> {
                     ? NetworkImage(profileImageUrl)
                     : null,
                 onBackgroundImageError: profileImageUrl.isNotEmpty
-                    ? (_, _) {}
+                    ? (exception, stackTrace) {}
                     : null,
                 child: profileImageUrl.isEmpty
                     ? Text(

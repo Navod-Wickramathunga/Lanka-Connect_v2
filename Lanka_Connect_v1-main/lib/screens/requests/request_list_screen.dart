@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../ui/mobile/mobile_components.dart';
 import '../../ui/mobile/mobile_page_scaffold.dart';
 import '../../ui/mobile/mobile_tokens.dart';
@@ -18,6 +19,11 @@ import '../../utils/user_roles.dart';
 /// Accepting a request automatically creates a booking.
 class RequestListScreen extends StatelessWidget {
   const RequestListScreen({super.key});
+
+  String _formatScheduledDate(dynamic value) {
+    if (value is! Timestamp) return '';
+    return DateFormat('EEE, d MMM yyyy').format(value.toDate().toLocal());
+  }
 
   String _shortId(String id, {int length = 8}) {
     final value = id.trim();
@@ -40,6 +46,9 @@ class RequestListScreen extends StatelessWidget {
     required String amountLabel,
   }) async {
     final notes = (requestData['notes'] ?? '').toString().trim();
+    final scheduledDateLabel = _formatScheduledDate(
+      requestData['scheduledDate'],
+    );
     final timeWindow = (requestData['timeWindow'] ?? '').toString().trim();
     final requestedTimeLabel = (requestData['requestedTimeLabel'] ?? '')
         .toString()
@@ -77,6 +86,10 @@ class RequestListScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text('From: $seekerName'),
+                if (scheduledDateLabel.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text('Requested date: $scheduledDateLabel'),
+                ],
                 if (timeWindow.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text('Time window: $timeWindow'),
@@ -192,6 +205,7 @@ class RequestListScreen extends StatelessWidget {
           body:
               'Your service request has been accepted. A booking has been created.',
           type: 'booking',
+          excludeSender: true,
           data: {
             'requestId': requestId,
             'bookingId': bookingRef.id,
@@ -204,6 +218,7 @@ class RequestListScreen extends StatelessWidget {
           title: 'Service request $status',
           body: 'Your service request has been $status.',
           type: 'request',
+          excludeSender: true,
           data: {'requestId': requestId, 'status': status},
         );
       }
@@ -256,6 +271,125 @@ class RequestListScreen extends StatelessWidget {
     }
   }
 
+  Widget _sectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontWeight: FontWeight.w700,
+          fontSize: 13,
+          color: Color(0xFF64748B),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRequestCard(
+    BuildContext context,
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+    final serviceId = data['serviceId']?.toString() ?? 'Unknown';
+    final seekerId = data['seekerId']?.toString() ?? '';
+    final providerId = data['providerId']?.toString() ?? '';
+    final amount = (data['amount'] is num)
+        ? (data['amount'] as num).toDouble()
+        : null;
+    final scheduledDateLabel = _formatScheduledDate(data['scheduledDate']);
+    final timeWindow = (data['timeWindow'] ?? '').toString().trim();
+    final requestedTimeLabel =
+        (data['requestedTimeLabel'] ?? '').toString().trim();
+    final createdAt = data['createdAt'];
+    String timeAgo = '';
+    if (createdAt is Timestamp) {
+      final diff = DateTime.now().difference(createdAt.toDate());
+      if (diff.inDays > 0) {
+        timeAgo = '${diff.inDays}d ago';
+      } else if (diff.inHours > 0) {
+        timeAgo = '${diff.inHours}h ago';
+      } else {
+        timeAgo = '${diff.inMinutes}m ago';
+      }
+    }
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: FirestoreRefs.services().doc(serviceId).snapshots(),
+        builder: (context, serviceSnapshot) {
+          final serviceData = serviceSnapshot.data?.data() ?? {};
+          final serviceTitle = (serviceData['title'] ?? '').toString().trim();
+          final category = (serviceData['category'] ?? '').toString().trim();
+          final city = serviceData['city'];
+          final district = serviceData['district'];
+          final location = DisplayNameUtils.locationLabel(
+            city: city,
+            district: district,
+            fallback: (serviceData['location'] ?? '').toString(),
+          );
+          final readableTitle = serviceTitle.isNotEmpty
+              ? serviceTitle
+              : 'Service ${_shortId(serviceId)}';
+          final subtitleParts = <String>[
+            if (category.isNotEmpty) category,
+            if (location.trim().isNotEmpty) location,
+            if (scheduledDateLabel.isNotEmpty) scheduledDateLabel,
+            if (requestedTimeLabel.isNotEmpty) requestedTimeLabel,
+            if (timeWindow.isNotEmpty) timeWindow,
+            if (amount != null) 'LKR ${amount.toStringAsFixed(0)}',
+            if (timeAgo.isNotEmpty) timeAgo,
+          ];
+
+          return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: FirestoreRefs.users().doc(seekerId).snapshots(),
+            builder: (context, seekerSnap) {
+              final seekerName =
+                  seekerSnap.data?.data()?['displayName']?.toString() ??
+                  seekerSnap.data?.data()?['name']?.toString() ??
+                  'Seeker';
+
+              return ListTile(
+                onTap: () => _showRequestDetails(
+                  context: context,
+                  requestId: doc.id,
+                  seekerId: seekerId,
+                  providerId: providerId,
+                  requestData: data,
+                  serviceTitle: readableTitle,
+                  category: category,
+                  location: location,
+                  seekerName: seekerName,
+                  createdLabel: timeAgo,
+                  amountLabel: amount == null
+                      ? ''
+                      : 'LKR ${amount.toStringAsFixed(0)}',
+                ),
+                leading: const CircleAvatar(
+                  child: Icon(Icons.assignment_outlined),
+                ),
+                title: Text(
+                  readableTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  [
+                    if (subtitleParts.isNotEmpty) subtitleParts.join(' - '),
+                    'From: $seekerName',
+                  ].join(' | '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: const Icon(Icons.chevron_right),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -265,18 +399,45 @@ class RequestListScreen extends StatelessWidget {
 
     final query = FirestoreRefs.requests()
         .where('providerId', isEqualTo: user.uid)
-        .where('status', isEqualTo: 'pending');
+        .where('status', isEqualTo: 'pending')
+        .orderBy('createdAt', descending: true);
+
+    final accentColor = RoleVisuals.forRole(UserRoles.provider).accent;
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: query.snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return kIsWeb
+              ? const WebPageScaffold(
+                  title: 'Requests',
+                  subtitle: 'Incoming service requests.',
+                  useScaffold: false,
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              : MobilePageScaffold(
+                  title: 'Requests',
+                  subtitle: 'Incoming service requests',
+                  accentColor: accentColor,
+                  body: const Center(child: CircularProgressIndicator()),
+                );
         }
+
         if (snapshot.hasError) {
-          return Center(
-            child: Text(FirestoreErrorHandler.toUserMessage(snapshot.error!)),
-          );
+          final msg = FirestoreErrorHandler.toUserMessage(snapshot.error!);
+          return kIsWeb
+              ? WebPageScaffold(
+                  title: 'Requests',
+                  subtitle: 'Incoming service requests.',
+                  useScaffold: false,
+                  child: Center(child: Text(msg)),
+                )
+              : MobilePageScaffold(
+                  title: 'Requests',
+                  subtitle: 'Incoming service requests',
+                  accentColor: accentColor,
+                  body: Center(child: Text(msg)),
+                );
         }
 
         final docs = snapshot.data?.docs ?? [];
@@ -285,144 +446,45 @@ class RequestListScreen extends StatelessWidget {
           if (!kIsWeb) {
             return MobilePageScaffold(
               title: 'Requests',
-              subtitle: 'Incoming booking requests',
-              accentColor: RoleVisuals.forRole(UserRoles.provider).accent,
+              subtitle: 'Incoming service requests',
+              accentColor: accentColor,
               body: const MobileEmptyState(
-                title: 'No pending requests.',
+                title: 'No pending service requests.',
                 icon: Icons.inbox,
                 subtitle:
-                    'New booking requests from seekers\nwill appear here.',
+                    'New service requests from seekers\nwill appear here.',
               ),
             );
           }
           return const WebPageScaffold(
             title: 'Requests',
-            subtitle: 'Incoming booking requests.',
+            subtitle: 'Incoming service requests.',
             useScaffold: false,
-            child: Center(child: Text('No pending requests.')),
+            child: Center(child: Text('No pending service requests.')),
           );
         }
 
-        final list = ListView.builder(
-          itemCount: docs.length,
-          itemBuilder: (context, index) {
-            final doc = docs[index];
-            final data = doc.data();
-            final serviceId = data['serviceId']?.toString() ?? 'Unknown';
-            final seekerId = data['seekerId']?.toString() ?? '';
-            final providerId = data['providerId']?.toString() ?? '';
-            final amount = (data['amount'] is num)
-                ? (data['amount'] as num).toDouble()
-                : null;
-            final createdAt = data['createdAt'];
-            String timeAgo = '';
-            if (createdAt is Timestamp) {
-              final diff = DateTime.now().difference(createdAt.toDate());
-              if (diff.inDays > 0) {
-                timeAgo = '${diff.inDays}d ago';
-              } else if (diff.inHours > 0) {
-                timeAgo = '${diff.inHours}h ago';
-              } else {
-                timeAgo = '${diff.inMinutes}m ago';
-              }
-            }
-
-            return Card(
-              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                stream: FirestoreRefs.services().doc(serviceId).snapshots(),
-                builder: (context, serviceSnapshot) {
-                  final serviceData = serviceSnapshot.data?.data() ?? {};
-                  final serviceTitle = (serviceData['title'] ?? '')
-                      .toString()
-                      .trim();
-                  final category = (serviceData['category'] ?? '')
-                      .toString()
-                      .trim();
-                  final city = serviceData['city'];
-                  final district = serviceData['district'];
-                  final location = DisplayNameUtils.locationLabel(
-                    city: city,
-                    district: district,
-                    fallback: (serviceData['location'] ?? '').toString(),
-                  );
-
-                  final readableTitle = serviceTitle.isNotEmpty
-                      ? serviceTitle
-                      : 'Service ${_shortId(serviceId)}';
-
-                  final subtitleParts = <String>[
-                    if (category.isNotEmpty) category,
-                    if (location.trim().isNotEmpty) location,
-                    if (amount != null) 'LKR ${amount.toStringAsFixed(0)}',
-                    if (timeAgo.isNotEmpty) timeAgo,
-                  ];
-
-                  return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                    stream: FirestoreRefs.users().doc(seekerId).snapshots(),
-                    builder: (context, seekerSnap) {
-                      final seekerName =
-                          seekerSnap.data?.data()?['displayName']?.toString() ??
-                          seekerSnap.data?.data()?['name']?.toString() ??
-                          'Seeker';
-
-                      return ListTile(
-                        onTap: () => _showRequestDetails(
-                          context: context,
-                          requestId: doc.id,
-                          seekerId: seekerId,
-                          providerId: providerId,
-                          requestData: data,
-                          serviceTitle: readableTitle,
-                          category: category,
-                          location: location,
-                          seekerName: seekerName,
-                          createdLabel: timeAgo,
-                          amountLabel: amount == null
-                              ? ''
-                              : 'LKR ${amount.toStringAsFixed(0)}',
-                        ),
-                        leading: const CircleAvatar(
-                          child: Icon(Icons.assignment_outlined),
-                        ),
-                        title: Text(
-                          readableTitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          [
-                            if (subtitleParts.isNotEmpty)
-                              subtitleParts.join(' - '),
-                            'From: $seekerName',
-                          ].join(' | '),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                      );
-                    },
-                  );
-                },
-              ),
-            );
-          },
+        final body = ListView(
+          children: [
+            _sectionHeader('Service Requests (${docs.length})'),
+            for (final doc in docs) _buildRequestCard(context, doc),
+          ],
         );
 
         if (!kIsWeb) {
           return MobilePageScaffold(
             title: 'Requests',
-            subtitle: 'Incoming booking requests',
-            accentColor: RoleVisuals.forRole(UserRoles.provider).accent,
-            body: list,
+            subtitle: 'Incoming service requests',
+            accentColor: accentColor,
+            body: body,
           );
         }
 
         return WebPageScaffold(
           title: 'Requests',
-          subtitle: 'Incoming booking requests.',
+          subtitle: 'Incoming service requests.',
           useScaffold: false,
-          child: list,
+          child: body,
         );
       },
     );

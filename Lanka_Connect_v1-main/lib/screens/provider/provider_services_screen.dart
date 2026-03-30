@@ -10,6 +10,7 @@ import '../../ui/mobile/mobile_tokens.dart';
 import '../../ui/theme/design_tokens.dart';
 import '../../ui/web/web_page_scaffold.dart';
 import '../../utils/firestore_refs.dart';
+import '../../widgets/service_visual.dart';
 import '../services/widgets/service_editor_form.dart';
 
 class ProviderServicesScreen extends StatefulWidget {
@@ -540,18 +541,21 @@ class _ProviderServiceCard extends StatelessWidget {
         : 0.0;
     final status = (data['status'] ?? 'pending').toString();
     final statusColor = _statusColor(status);
+    final visualStyle = serviceVisualStyleForCategory(category);
 
     return Card(
       key: Key('provider_services_card_$serviceId'),
       child: ListTile(
         onTap: deleting ? null : onTap,
         leading: CircleAvatar(
-          backgroundColor: statusColor.withValues(alpha: 0.12),
+          backgroundColor: images.isNotEmpty
+              ? statusColor.withValues(alpha: 0.12)
+              : visualStyle.primary.withValues(alpha: 0.14),
           backgroundImage: images.isNotEmpty
               ? NetworkImage(images.first)
               : null,
           child: images.isEmpty
-              ? Icon(Icons.home_repair_service, color: statusColor)
+              ? Icon(visualStyle.icon, color: visualStyle.primary)
               : null,
         ),
         title: Text(
